@@ -1,11 +1,11 @@
-//
-// Created by kari on 18. 1. 1.
-//
+
 
 //
 // Created by zain on 17. 12. 17.
 //
 
+
+// This is the first implementation in which I track using all keypoints
 
 #include <iostream>
 

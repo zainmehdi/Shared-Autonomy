@@ -1,10 +1,10 @@
-//
-// Created by kari on 18. 1. 3.
-//
+
 
 //
 // Created by zain on 17. 12. 17.
 //
+
+// Program that uses transformation concept you select the goal point etc
 
 
 #include <iostream>

@@ -6,6 +6,7 @@
 
 /// Gandi Programming ke natije
 /// Initializing static variables that shouldnt be static
+// unity version
 
 bool feature_extractor::drag;
 vector<Point> feature_extractor::line_points;

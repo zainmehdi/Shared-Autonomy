@@ -2,10 +2,10 @@
 // Created by zain on 17. 12. 17.
 //
 
-// Program that uses transformation concept
+
+// This is the latest version in which I find keypoints on the drawn path
 
 #include <iostream>
-
 #include <visp/vpCameraParameters.h>
 #include <visp/vpDisplayX.h>
 #include <visp/vpDot2.h>

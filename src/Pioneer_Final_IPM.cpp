@@ -2,7 +2,7 @@
 // Created by kari on 17. 12. 26.
 //
 
-// Program that uses IPM and world to screen calibration using checkerboard
+// Program that uses IPM and world to screen calibration using checkerboard doesnt include VISP part yet
 
 #include <opencv2/opencv.hpp>
 #include "opencv2/imgproc.hpp"
@@ -52,7 +52,7 @@ void help(char *argv[]) {
     cout	<< "\nThis is my Master's thesis that's busting my ass right now ^_^ "
             << "\nIt uses IPM to warp the image to top view and uses Chess board to calibrate"
             << "\nbetween screen and world units"
-            << "\nAfter Calibration we can get real world distance of object's in image from our robot"
+            << "\nAfter Calibration we can get real world distance of object in image from our robot"
             << "\n\nDevelopment still in progress"
             << endl;
 }
