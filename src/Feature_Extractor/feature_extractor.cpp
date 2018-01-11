@@ -7,6 +7,8 @@
 /// Gandi Programming ke natije
 /// Initializing static variables that shouldnt be static
 
+//unity version
+
 bool feature_extractor::drag;
 vector<Point> feature_extractor::line_points;
 vector<Point> feature_extractor::selected_points;
@@ -35,7 +37,7 @@ TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
 feature_extractor::feature_extractor() :  it(nh) {
 
     // ROS related
-    image_sub = it.subscribe("/usb_cam/image_raw", 1,
+    image_sub = it.subscribe("image_raw", 1,
                              &feature_extractor::imageCb, this);
     image_pub = it.advertise("/image_converter/output_video", 1);
 
