@@ -91,25 +91,7 @@ double camera_pitch = 45;
 
 
 
-/*!
-  \example tutorial_ros_node_pioneer_visual_servo.cpp
 
-  Example that shows how to create a ROS node able to control the Pioneer mobile robot by IBVS visual servoing with respect to a blob.
-  The current visual features that are used are s = (x, log(Z/Z*)). The desired one are s* = (x*, 0), with:
-  - x the abscisse of the point corresponding to the blob center of gravity measured at each iteration,
-  - x* the desired abscisse position of the point (x* = 0)
-  - Z the depth of the point measured at each iteration
-  - Z* the desired depth of the point equal to the initial one.
-
-  The degrees of freedom that are controlled are (vx, wz), where wz is the rotational velocity
-  and vx the translational velocity of the mobile platform at point M located at the middle
-  between the two wheels.
-
-  The feature x allows to control wy, while log(Z/Z*) allows to control vz.
-  The value of x is measured thanks to a blob tracker.
-  The value of Z is estimated from the surface of the blob that is proportional to the depth Z.
-
-  */
 
 void points_selector(vector<Point> &all_points){
 
