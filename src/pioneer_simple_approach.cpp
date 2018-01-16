@@ -309,7 +309,6 @@ int main(int argc, char **argv) {
 
                     // automatic initialization
                     goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
-//                    cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
                     imshow("Mask", mask);
 
                     for (auto index:point_buffer) {
@@ -454,12 +453,6 @@ int main(int argc, char **argv) {
                                      3, termcrit, 0, 0.001);
 
 
-//
-//             if(!first_run)
-//             {
-//                 Mat rig_transformation= estimateRigidTransform(prevGray,gray,1);
-//                t_y =rig_transformation.at<double>(1,2);
-//             }
                 size_t i, k;
                 for( i = k = 0; i < points[1].size(); i++ )
                 {
@@ -487,55 +480,12 @@ int main(int argc, char **argv) {
 
                 cout << "Point 0 size: " << points[0].size() << endl;
 
-//            map <double,Point2f> distance_points;
-//            vector<double> dist;
-//            vector<Point2f> sorted_points;
-//
-//
-//            for(auto t:points[1])
-//            {
-//                dist.push_back(distance(desired_point,t));
-//                distance_points[distance(desired_point,t)]=t;
-//                cout<<"unsorted points:"<<distance(desired_point,t)<<"\n";
-//            }
-//
-//
-//            sort(dist.begin(),dist.end());
-//
-//
-//            for(auto f:dist)
-//            {
-//                sorted_points.push_back(distance_points.at(f));
-//                cout<<"sorted points:"<<f<<"\n";
-//            }
 
-
-
-//
-//            v[1] = (-transformed_points[n].x + desired_point.x)/400;
-//            v[0] = (-transformed_points[n].y+280 + desired_point.y)/800;
-
-
-//            v[1] = (-line_points[n].x + desired_point.x)/400;
-//            v[0] = (-line_points[n].y + desired_point.y)/800;
 
                 v[1] = (-points[0][n].x + desired_point.x) / 400;
                 v[0] = (-points[0][n].y + desired_point.y) / 800;
 
                 circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
-//            v[0] = (-line_points_world[n].y + desired_point.y)/600;
-
-//            cout<<"Current Point image : "<<transformed_points[n]<<endl;
-//            cout<<"Current Point robot: "<<line_points_world[n]<<endl;
-
-
-
-//            auto done = std::chrono::high_resolution_clock::now();
-//            std::chrono::duration<double> elapsed = done - started;
-//            std::cout <<"Time :"<< elapsed.count()<<endl;
-
-//            v[1] = (-line_points[n].x + desired_point.x)*0.002+ 2*((current.x-previous.x)/1200);
-//            v[0] = (-line_points[n].y + desired_point.y)*0.002 +0.5*((current.y-previous.y)/1200);
 
 
 
