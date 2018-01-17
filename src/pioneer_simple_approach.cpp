@@ -2,24 +2,9 @@
 // Created by zain on 17. 12. 17.
 //
 
-// Program that uses transformation concept
+// Program that uses images coming from unity
 
 #include <iostream>
-
-#include <visp/vpCameraParameters.h>
-#include <visp/vpDisplayX.h>
-#include <visp/vpDot2.h>
-#include <visp/vpFeatureBuilder.h>
-#include <visp/vpFeatureDepth.h>
-#include <visp/vpFeaturePoint.h>
-#include <visp/vpHomogeneousMatrix.h>
-#include <visp/vpImage.h>
-#include <visp/vpImageConvert.h>
-#include <visp/vpServo.h>
-#include <visp/vpVelocityTwistMatrix.h>
-
-#include <visp_ros/vpROSGrabber.h>
-#include <visp_ros/vpROSRobotPioneer.h>
 #include "ctime"
 #include "chrono"
 #include "ros/ros.h"
@@ -77,6 +62,11 @@ vector<Point> line_points_world;
 vector<Point> transformed_points;
 vector<Point> line_points_circle;
 vector<Point> selected_points;
+
+bool path_drawn=false;
+bool feature_on_path_found=false;
+bool path_feature_found=false;
+
 
 Point Target_point;
 Point Target_point_prev;
@@ -179,370 +169,380 @@ double derivative(Point a, Point b)
     return ((b.y-a.y)/(b.x-a.x));
 }
 
-int main(int argc, char **argv) {
-    try {
-        vpImage<unsigned char> I; // Create a gray level image container
-        double depth = 1;
-        double lambda = 0.6;
-        double coef = 1. / 6.77; // Scale parameter used to estimate the depth Z of the blob from its surface
-        desired_point = Point(300, 475);
-
-        namedWindow("LK Demo", 1);
-        setMouseCallback("LK Demo", onMouse, 0);
-        vpROSRobotPioneer robot;
-        robot.setCmdVelTopic("/RosAria/cmd_vel");
-        robot.init(argc, argv);
-
-        // Wait 3 sec to be sure that the low level Aria thread used to control
-        // the robot is started. Without this delay we experienced a delay (arround 2.2 sec)
-        // between the velocity send to the robot and the velocity that is really applied
-        // to the wheels.
-        vpTime::sleepMs(3000);
-
-        std::cout << "Robot connected" << std::endl;
-
-        // Camera parameters. In this experiment we don't need a precise calibration of the camera
-        vpCameraParameters cam;
-
-        // Create a grabber based on libdc1394-2.x third party lib (for firewire cameras under Linux)
-        vpROSGrabber g;
-        g.setCameraInfoTopic("/usb_cam/camera_info");
-        g.setImageTopic("/usb_cam/image_raw");
-        g.setRectify(true);
-        g.open(argc, argv);
-        // Get camera parameters from /camera/camera_info topic
-        if (g.getCameraInfo(cam) == false)
-            cam.initPersProjWithoutDistortion(600, 600, I.getWidth() / 2, I.getHeight() / 2);
 
 
 
-        /// OpenCV part starts here that finds Good features and uses Shi-Tomasi to track ///
-        ///////////////////////////////////////////////////////////////////////////////////
+void imageCb(const sensor_msgs::ImageConstPtr& msg)
+{
+    /// OpenCV part starts here that finds Good features and uses Shi-Tomasi to track ///
+    ///////////////////////////////////////////////////////////////////////////////////
 
 
-        cout << "\n ****************************************\n"
-             << "\nDraw the desired path\n"
-             << "\n*****************************************\n";
+    cout << "\n ****************************************\n"
+         << "\nDraw the desired path\n"
+         << "\n*****************************************\n";
 
 
-        while (1) {
-
-            g.acquire(I);
-            vpImageConvert::convert(I, image);
-            image.copyTo(frame);
-            circle(image, desired_point, 7, Scalar(0, 150, 0), -1, 8);
+    if (!path_drawn) {
 
 
-            if (frame.empty())
-                break;
+        cv_bridge::CvImagePtr cv_ptr;
+        try {
+            cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+        }
+        catch (cv_bridge::Exception &e) {
+            ROS_ERROR("cv_bridge exception: %s", e.what());
+            return;
+        }
 
-            //  frame.copyTo(image);
-            //  cvtColor(image, gray, COLOR_BGR2GRAY);
+        image=cv_ptr->image;
+        image.copyTo(frame);
+//        circle(image, desired_point, 7, Scalar(0, 150, 0), -1, 8);
 
-            frame.copyTo(gray);
-            if (nightMode)
-                image = Scalar::all(0);
 
-            for (auto index:line_points) {
+        if (frame.empty())
+            return;
 
-                circle(image, Point(index), 5, CV_RGB(255, 255, 0), 1, 8, 0);
-            }
+        frame.copyTo(gray);
+        if (nightMode)
+            image = Scalar::all(0);
 
-            for (auto g:selected_points) {
-                rectangle(image, Point(g.x - width / 2, g.y - height / 2), Point(g.x + width / 2, g.y + height / 2),
-                          CV_RGB(255, 0, 0), 1, 8, 0);
+        for (auto index:line_points) {
 
-            }
+            circle(image, Point(index), 5, CV_RGB(255, 255, 0), 1, 8, 0);
+        }
 
-            char c = (char) waitKey(10);
-            if (c == 27)
-                break;
-            switch (c) {
-                case 'c':
-                    line_points.clear();
-                    selected_points.clear();
-                    break;
-            }
-
-            imshow("LK Demo", image);
+        for (auto g:selected_points) {
+            rectangle(image, Point(g.x - width / 2, g.y - height / 2), Point(g.x + width / 2, g.y + height / 2),
+                      CV_RGB(255, 0, 0), 1, 8, 0);
 
         }
 
-
-        cout << "\n ***************************************************\n"
-             << "\nClick on the goal position to select nearest feature\n"
-             << "\nPress any key to proceed\n"
-             << "\n****************************************************\n";
-
-
-        while (1) {
-
-
-            waitKey(10);
-
-
-            g.acquire(I);
-            vpImageConvert::convert(I, image);
-            image.copyTo(frame);
-            circle(image, desired_point, 7, Scalar(0, 150, 0), -1, 8);
-
-
-            if (frame.empty())
-                break;
-
-
-            frame.copyTo(gray);
-            if (nightMode)
-                image = Scalar::all(0);
-
-
-            if (needToInit) {
-
-
-                for (auto it:selected_points) {
-
-                    g.acquire(I);
-                    vpImageConvert::convert(I, image);
-                    mask = Mat::zeros(image.size(), CV_8U);
-                    roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
-                    roi = Scalar(255, 255, 255);
-
-                    // automatic initialization
-                    goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
-                    imshow("Mask", mask);
-
-                    for (auto index:point_buffer) {
-
-                        points[1].push_back(index);
-
-                    }
-                }
-
-
-                addRemovePt = false;
-                features_found = true;
-            }
-
-
-            if (features_found) {
-                for (auto q:points[1]) {
-                    circle(image, q, 3, Scalar(0, 255, 0), -1, 8);
-                    imshow("LK Demo", image);
-
-                }
-
-            }
-
-            needToInit = false;
-            for (auto index:line_points) {
-
-                circle(image, Point(index), 8, CV_RGB(255, 255, 0), 0.5, 8, 0);
-            }
-
-            needToInit = false;
-            imshow("LK Demo", image);
-
-            char c = (char) waitKey(10);
-            if (c == 27)
-                break;
-            switch (c) {
-                case 'r':
-                    needToInit = true;
-                    pp.clear();
-                    e = 0;
-                    cout << "Re Initialized \n";
-                    break;
-
-                case 'c':
-                    points[0].clear();
-                    points[1].clear();
-                    line_points.clear();
-                    line_points_circle.clear();
-                    selected_points.clear();
-                    features_found = false;
-                    cout << "Points Cleared \n";
-                    break;
-                case 'n':
-                    nightMode = !nightMode;
-                    break;
-            }
-
-            std::swap(points[1], points[0]);
-            cv::swap(prevGray, gray);
+        char c = (char) waitKey(10);
+        if (c == 27)
+        {
+            path_drawn=true;
 
         }
 
-        cout << "While loop is broken Entering Visual Servo loop \n";
-        line_point_size = line_points.size();
+        switch (c) {
+            case 'c':
+                line_points.clear();
+                selected_points.clear();
+                break;
+        }
+
+        imshow("LK Demo", image);
+
+    }
+
+
+    cout << "\n ***************************************************\n"
+         << "\nClick on the goal position to select nearest feature\n"
+         << "\nPress any key to proceed\n"
+         << "\n****************************************************\n";
+
+
+    if (path_drawn==true && feature_on_path_found==false) {
+
+
+        waitKey(10);
 
 
 
+        cv_bridge::CvImagePtr cv_ptr;
+        try {
+            cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+        }
+        catch (cv_bridge::Exception &e) {
+            ROS_ERROR("cv_bridge exception: %s", e.what());
+            return;
+        }
+
+        image=cv_ptr->image;
+        image.copyTo(frame);
+//        circle(image, desired_point, 7, Scalar(0, 150, 0), -1, 8);
+
+
+        if (frame.empty())
+            return;
+
+
+        frame.copyTo(gray);
+        if (nightMode)
+            image = Scalar::all(0);
+
+
+        if (needToInit) {
+
+
+            for (auto it:selected_points) {
+
+                cv_bridge::CvImagePtr cv_ptr;
+                try {
+                    cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+                }
+                catch (cv_bridge::Exception &e) {
+                    ROS_ERROR("cv_bridge exception: %s", e.what());
+                    return;
+                }
+
+                image=cv_ptr->image;
+                mask = Mat::zeros(image.size(), CV_8U);
+                roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
+                roi = Scalar(255, 255, 255);
+
+                // automatic initialization
+                goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
+                imshow("Mask", mask);
+
+                for (auto index:point_buffer) {
+
+                    points[1].push_back(index);
+
+                }
+            }
+
+
+            addRemovePt = false;
+            features_found = true;
+        }
+
+
+        if (features_found) {
+            for (auto q:points[1]) {
+                circle(image, q, 3, Scalar(0, 255, 0), -1, 8);
+                imshow("LK Demo", image);
+
+            }
+
+        }
+
+        needToInit = false;
+        for (auto index:line_points) {
+
+            circle(image, Point(index), 8, CV_RGB(255, 255, 0), 0.5, 8, 0);
+        }
+
+        needToInit = false;
+        imshow("LK Demo", image);
+
+        char c = (char) waitKey(10);
+        if (c == 27)
+        {
+           features_found==true;
+
+        }
+
+        switch (c) {
+            case 'r':
+                needToInit = true;
+                pp.clear();
+                e = 0;
+                cout << "Re Initialized \n";
+                break;
+
+            case 'c':
+                points[0].clear();
+                points[1].clear();
+                line_points.clear();
+                line_points_circle.clear();
+                selected_points.clear();
+                features_found = false;
+                cout << "Points Cleared \n";
+                break;
+            case 'n':
+                nightMode = !nightMode;
+                break;
+        }
+
+        std::swap(points[1], points[0]);
+        cv::swap(prevGray, gray);
+
+    }
+
+    cout << "While loop is broken Entering Visual Servo loop \n";
+    line_point_size = line_points.size();
+
+
+
+
+
+    //////////////////////////////OpenCV part ends here /////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////
+
+
+    if(path_drawn==true && feature_on_path_found==true) {
+
+        cout << "\n**********************************\n"
+             << "\n Visual Servoing Loop has started\n"
+             << "\n**********************************\n"
+             << "\nPress any key to continue\n";
+
+
+        cv_bridge::CvImagePtr cv_ptr;
+        try {
+            cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+        }
+        catch (cv_bridge::Exception &e) {
+            ROS_ERROR("cv_bridge exception: %s", e.what());
+            return;
+        }
+
+        image=cv_ptr->image;
+        image.copyTo(frame);
+
+
+        if (frame.empty())
+            return;
+
+
+        frame.copyTo(gray);
+        if (nightMode)
+            image = Scalar::all(0);
+
+        if (needToInit) {
+
+
+            for (auto it:selected_points) {
+
+                cv_bridge::CvImagePtr cv_ptr;
+                try {
+                    cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+                }
+                catch (cv_bridge::Exception &e) {
+                    ROS_ERROR("cv_bridge exception: %s", e.what());
+                    return;
+                }
+
+                image=cv_ptr->image;
+                mask = Mat::zeros(image.size(), CV_8U);
+                roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
+                roi = Scalar(255, 255, 255);
+
+                // automatic initialization
+                goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
+                cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
+                imshow("Mask", mask);
+
+                for (auto index:point_buffer) {
+
+                    points[1].push_back(index);
+
+                }
+            }
+
+
+            addRemovePt = false;
+            features_found = true;
+        }
+
+
+        else if (!points[0].empty()) {
+            vector<uchar> status;
+            vector<float> err;
+            if (prevGray.empty())
+                gray.copyTo(prevGray);
+            calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
+                                 3, termcrit, 0, 0.001);
+
+
+            size_t i, k;
+            for( i = k = 0; i < points[1].size(); i++ )
+            {
+
+                points[1][k++] = points[1][i];
+                circle( image, points[1][i], 3, Scalar(0,255,0), -1, 8);
+            }
+            points[1].resize(k);
+
+
+            circle(image, desired_point, 5, Scalar(0, 150, 0), -1, 8);
+
+        }
+        needToInit = false;
+
+        std::swap(points[1], points[0]);
+        cv::swap(prevGray, gray);
 
 
         //////////////////////////////OpenCV part ends here /////////////////////////////
         ////////////////////////////////////////////////////////////////////////////////
 
-
-        // Create an image viewer
-        vpDisplayX d(I, 10, 10, "Current frame");
-        vpDisplay::display(I);
-        vpDisplay::flush(I);
-
-
-        while (1) {
-
-            cout << "\n**********************************\n"
-                 << "\n Visual Servoing Loop has started\n"
-                 << "\n**********************************\n"
-                 << "\nPress any key to continue\n";
-
-
-            g.acquire(I);
-
-
-            /// OpenCV part starts here that finds Good features and uses Shi-Tomasi to track ///
-            ///////////////////////////////////////////////////////////////////////////////////
-
-            vpImageConvert::convert(I, image);
-            image.copyTo(frame);
-
-
-            if (frame.empty())
-                break;
-
-
-            frame.copyTo(gray);
-            if (nightMode)
-                image = Scalar::all(0);
-
-            if (needToInit) {
-
-
-                for (auto it:selected_points) {
-
-                    g.acquire(I);
-                    vpImageConvert::convert(I, image);
-                    mask = Mat::zeros(image.size(), CV_8U);
-                    roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
-                    roi = Scalar(255, 255, 255);
-
-                    // automatic initialization
-                    goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
-                    cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
-                    imshow("Mask", mask);
-
-                    for (auto index:point_buffer) {
-
-                        points[1].push_back(index);
-
-                    }
-                }
-
-
-                addRemovePt = false;
-                features_found = true;
-            }
-
-
-         else if (!points[0].empty()) {
-                vector<uchar> status;
-                vector<float> err;
-                if (prevGray.empty())
-                    gray.copyTo(prevGray);
-                calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
-                                     3, termcrit, 0, 0.001);
-
-
-                size_t i, k;
-                for( i = k = 0; i < points[1].size(); i++ )
-                {
-
-                    points[1][k++] = points[1][i];
-                    circle( image, points[1][i], 3, Scalar(0,255,0), -1, 8);
-                }
-                points[1].resize(k);
-
-
-                circle(image, desired_point, 5, Scalar(0, 150, 0), -1, 8);
-
-            }
-                needToInit = false;
-
-                std::swap(points[1], points[0]);
-                cv::swap(prevGray, gray);
-
-
-                //////////////////////////////OpenCV part ends here /////////////////////////////
-                ////////////////////////////////////////////////////////////////////////////////
-
-                vpColVector v(2);
-
-
-                cout << "Point 0 size: " << points[0].size() << endl;
-
-
-
-                v[1] = (-points[0][n].x + desired_point.x) / 400;
-                v[0] = (-points[0][n].y + desired_point.y) / 800;
-
-                circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
-
-
-
-                imshow("LK Demo", image);
-
-                robot.setVelocity(vpRobot::REFERENCE_FRAME, v);
-
-
-                first_run = false;
-
-
-
-//            if(distance(desired_point,line_points[n]) < 5)
-            if(distance(desired_point,points[0][n]) < 3)
-            {
+//        vpColVector v(2);
 //
-                n++;
-                if(n==points[0].size())
-                    waitKey();
+//
+//        cout << "Point 0 size: " << points[0].size() << endl;
+//
+//
+//
+//        v[1] = (-points[0][n].x + desired_point.x) / 400;
+//        v[0] = (-points[0][n].y + desired_point.y) / 800;
 
-               // needToInit=true;
-
-            }
+        circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
 
 
 
+        imshow("LK Demo", image);
+
+        //   robot.setVelocity(vpRobot::REFERENCE_FRAME, v);
 
 
-                char c = (char) waitKey(10);
-                if (c == 27)
-                    break;
-                switch (c) {
-                    case 'r':
-                        needToInit = true;
-                        pp.clear();
-                        e = 0;
-                        cout << "Re Initialized \n";
-                        break;
+        first_run = false;
 
-                    case 'c':
-                        points[0].clear();
-                        points[1].clear();
-                        line_points.clear();
-                        line_points_circle.clear();
-                        features_found = false;
-                        cout << "Points Cleared \n";
-                        break;
-                    case 'n':
-                        break;
-                }
+
+
+        if(distance(desired_point,points[0][n]) < 3)
+        {
+
+            n++;
+            if(n==points[0].size())
+                waitKey();
+
 
         }
-        return 0;
-    }
 
-    catch (vpException e) {
-        std::cout << "Catch an exception: " << e << std::endl;
-        return 1;
+
+
+
+
+        char c = (char) waitKey(10);
+        if (c == 27)
+            return;
+        switch (c) {
+            case 'r':
+                needToInit = true;
+                pp.clear();
+                e = 0;
+                cout << "Re Initialized \n";
+                break;
+
+            case 'c':
+                points[0].clear();
+                points[1].clear();
+                line_points.clear();
+                line_points_circle.clear();
+                features_found = false;
+                cout << "Points Cleared \n";
+                break;
+            case 'n':
+                break;
+        }
+
     }
+}
+
+
+
+int main(int argc, char **argv) {
+
+
+    ros::init(argc, argv, "unity_autonomy");
+    ros::NodeHandle nh;
+    image_transport::ImageTransport it(nh);
+    image_transport::Subscriber image_sub;
+    image_transport::Publisher image_pub;
+    image_sub = it.subscribe("image_raw", 1,imageCb);
+    ros::spin();
+    return 0;
 }
