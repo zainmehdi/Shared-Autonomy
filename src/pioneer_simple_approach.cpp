@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include "ros/ros.h"
 #include "image_transport/image_transport.h"
+#include "geometry_msgs/Twist.h"
 #include "cv_bridge/cv_bridge.h"
 
 #if defined(VISP_HAVE_DC1394_2) && defined(VISP_HAVE_X11)
@@ -31,7 +32,7 @@ TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
 Size subPixWinSize(10,10), winSize(30,30);
 vector<cv::Mat> transformation_bw_line;
 Mat transformation_bw_goal_nf;
-int MAX_COUNT = 200;
+int MAX_COUNT = 500;
 bool needToInit = false;
 bool nightMode = false;
 bool features_found=false;
@@ -62,12 +63,13 @@ vector<Point> line_points_world;
 vector<Point> transformed_points;
 vector<Point> line_points_circle;
 vector<Point> selected_points;
+geometry_msgs::Twist v;
 
 bool path_drawn=false;
 bool feature_on_path_found=false;
 bool path_feature_found=false;
 
-
+ros::Publisher vel_pub;
 Point Target_point;
 Point Target_point_prev;
 Point p;
@@ -116,8 +118,7 @@ void points_selector(vector<Point> &all_points){
 {
     if( event == EVENT_LBUTTONDOWN && !drag )
     {
-//        point = Point2f((float)x, (float)y);
-//        addRemovePt = true;
+
         drag=true;
     }
 
@@ -177,33 +178,31 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
     /// OpenCV part starts here that finds Good features and uses Shi-Tomasi to track ///
     ///////////////////////////////////////////////////////////////////////////////////
 
+    cv_bridge::CvImagePtr cv_ptr;
+    try {
+        cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+    }
+    catch (cv_bridge::Exception &e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
 
-    cout << "\n ****************************************\n"
-         << "\nDraw the desired path\n"
-         << "\n*****************************************\n";
+    frame=cv_ptr->image;
+
+
 
 
     if (!path_drawn) {
 
 
-        cv_bridge::CvImagePtr cv_ptr;
-        try {
-            cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
-        }
-        catch (cv_bridge::Exception &e) {
-            ROS_ERROR("cv_bridge exception: %s", e.what());
-            return;
-        }
 
-        image=cv_ptr->image;
-        image.copyTo(frame);
-//        circle(image, desired_point, 7, Scalar(0, 150, 0), -1, 8);
+        cout<<"First Part \n";
 
-
-        if (frame.empty())
+        if( frame.empty() )
             return;
 
-        frame.copyTo(gray);
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
         if (nightMode)
             image = Scalar::all(0);
 
@@ -229,82 +228,58 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
             case 'c':
                 line_points.clear();
                 selected_points.clear();
+                path_drawn= false;
                 break;
         }
 
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
         imshow("LK Demo", image);
 
     }
 
 
-    cout << "\n ***************************************************\n"
-         << "\nClick on the goal position to select nearest feature\n"
-         << "\nPress any key to proceed\n"
-         << "\n****************************************************\n";
+
+    if (path_drawn &&!features_found ) {
 
 
-    if (path_drawn==true && feature_on_path_found==false) {
 
-
+        cout << "\n ****************************************\n"
+             << "\nFinding Features on Drawn Path\n"
+             << "\n*****************************************\n";
         waitKey(10);
 
-
-
-        cv_bridge::CvImagePtr cv_ptr;
-        try {
-            cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
-        }
-        catch (cv_bridge::Exception &e) {
-            ROS_ERROR("cv_bridge exception: %s", e.what());
-            return;
-        }
-
-        image=cv_ptr->image;
-        image.copyTo(frame);
-//        circle(image, desired_point, 7, Scalar(0, 150, 0), -1, 8);
-
-
-        if (frame.empty())
+        if( frame.empty() )
             return;
 
-
-        frame.copyTo(gray);
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
         if (nightMode)
             image = Scalar::all(0);
 
 
         if (needToInit) {
 
-
+            cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            mask = Mat::zeros(gray.size(), CV_8U);
             for (auto it:selected_points) {
 
-                cv_bridge::CvImagePtr cv_ptr;
-                try {
-                    cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
-                }
-                catch (cv_bridge::Exception &e) {
-                    ROS_ERROR("cv_bridge exception: %s", e.what());
-                    return;
-                }
 
-                image=cv_ptr->image;
-                mask = Mat::zeros(image.size(), CV_8U);
                 roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
                 roi = Scalar(255, 255, 255);
 
-                // automatic initialization
-                goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
-                imshow("Mask", mask);
+            }
+            // automatic initialization
+            goodFeaturesToTrack(gray,point_buffer, MAX_COUNT, 0.01, 1, mask, 3, 5, 0, 0.04);
+            cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
+            imshow("Mask", mask);
 
-                for (auto index:point_buffer) {
+            for (auto index:point_buffer) {
 
-                    points[1].push_back(index);
+                points[1].push_back(index);
 
-                }
             }
 
 
-            addRemovePt = false;
             features_found = true;
         }
 
@@ -318,26 +293,25 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
         }
 
-        needToInit = false;
         for (auto index:line_points) {
 
             circle(image, Point(index), 8, CV_RGB(255, 255, 0), 0.5, 8, 0);
         }
 
         needToInit = false;
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
         imshow("LK Demo", image);
 
-        char c = (char) waitKey(10);
+        char c = (char) waitKey(30);
         if (c == 27)
         {
-           features_found==true;
+            return;
 
         }
 
         switch (c) {
             case 'r':
                 needToInit = true;
-                pp.clear();
                 e = 0;
                 cout << "Re Initialized \n";
                 break;
@@ -350,6 +324,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                 selected_points.clear();
                 features_found = false;
                 cout << "Points Cleared \n";
+                path_drawn= false;
+                feature_on_path_found=false;
                 break;
             case 'n':
                 nightMode = !nightMode;
@@ -361,67 +337,44 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
     }
 
-    cout << "While loop is broken Entering Visual Servo loop \n";
-    line_point_size = line_points.size();
-
-
-
-
 
     //////////////////////////////OpenCV part ends here /////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////
 
 
-    if(path_drawn==true && feature_on_path_found==true) {
+    if(path_drawn && features_found) {
 
         cout << "\n**********************************\n"
              << "\n Visual Servoing Loop has started\n"
-             << "\n**********************************\n"
-             << "\nPress any key to continue\n";
+             << "\n**********************************\n";
 
 
-        cv_bridge::CvImagePtr cv_ptr;
-        try {
-            cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
-        }
-        catch (cv_bridge::Exception &e) {
-            ROS_ERROR("cv_bridge exception: %s", e.what());
-            return;
-        }
-
-        image=cv_ptr->image;
-        image.copyTo(frame);
 
 
-        if (frame.empty())
+
+
+        if( frame.empty() )
             return;
 
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
 
-        frame.copyTo(gray);
         if (nightMode)
             image = Scalar::all(0);
 
         if (needToInit) {
 
-
+            cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            mask = Mat::zeros(gray.size(), CV_8U);
             for (auto it:selected_points) {
 
-                cv_bridge::CvImagePtr cv_ptr;
-                try {
-                    cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
-                }
-                catch (cv_bridge::Exception &e) {
-                    ROS_ERROR("cv_bridge exception: %s", e.what());
-                    return;
-                }
 
-                image=cv_ptr->image;
-                mask = Mat::zeros(image.size(), CV_8U);
                 roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
                 roi = Scalar(255, 255, 255);
 
+            }
                 // automatic initialization
-                goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
+                goodFeaturesToTrack(gray,point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
                 cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
                 imshow("Mask", mask);
 
@@ -430,7 +383,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                     points[1].push_back(index);
 
                 }
-            }
+
 
 
             addRemovePt = false;
@@ -439,6 +392,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
 
         else if (!points[0].empty()) {
+
             vector<uchar> status;
             vector<float> err;
             if (prevGray.empty())
@@ -457,7 +411,6 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
             points[1].resize(k);
 
 
-            circle(image, desired_point, 5, Scalar(0, 150, 0), -1, 8);
 
         }
         needToInit = false;
@@ -476,12 +429,16 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 //
 //
 //
-//        v[1] = (-points[0][n].x + desired_point.x) / 400;
-//        v[0] = (-points[0][n].y + desired_point.y) / 800;
+//        v.linear.y = -(-points[0][n].x + desired_point.x) / 800;
+//        v.linear.z = -(-points[0][n].y + desired_point.y) / 1000;
 
+        v.linear.y = 0;
+        v.linear.z = 0;
+
+        vel_pub.publish(v);
         circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
 
-
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
 
         imshow("LK Demo", image);
 
@@ -506,7 +463,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
 
 
-        char c = (char) waitKey(10);
+        char c = (char) waitKey(20);
         if (c == 27)
             return;
         switch (c) {
@@ -524,6 +481,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                 line_points_circle.clear();
                 features_found = false;
                 cout << "Points Cleared \n";
+                path_drawn= false;
+                feature_on_path_found=false;
                 break;
             case 'n':
                 break;
@@ -539,10 +498,13 @@ int main(int argc, char **argv) {
 
     ros::init(argc, argv, "unity_autonomy");
     ros::NodeHandle nh;
+    desired_point = Point(320, 470);
     image_transport::ImageTransport it(nh);
     image_transport::Subscriber image_sub;
-    image_transport::Publisher image_pub;
+    vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
     image_sub = it.subscribe("image_raw", 1,imageCb);
+    namedWindow( "LK Demo", 1 );
+    setMouseCallback( "LK Demo", onMouse, 0 );
     ros::spin();
     return 0;
 }

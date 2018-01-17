@@ -240,12 +240,28 @@
 #include "opencv2/imgproc.hpp"
 #include "opencv2/videoio.hpp"
 #include "opencv2/highgui.hpp"
+#include <iostream>
+#include "ctime"
+#include "chrono"
+#include "ros/ros.h"
+#include "opencv2/video/tracking.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/videoio.hpp"
+#include "opencv2/highgui.hpp"
+
+#include <iostream>
+#include <ctype.h>
+#include "ros/ros.h"
+#include "image_transport/image_transport.h"
+#include "cv_bridge/cv_bridge.h"
+
 
 #include <iostream>
 #include <ctype.h>
 
 using namespace cv;
 using namespace std;
+namespace enc = sensor_msgs::image_encodings;
 
 static void help()
 {
@@ -263,6 +279,15 @@ static void help()
 
 Point2f point;
 bool addRemovePt = false;
+Mat img;
+Mat gray, prevGray, image, frame;
+vector<Point2f> points[2];
+TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
+Size subPixWinSize(10,10), winSize(31,31);
+
+const int MAX_COUNT = 500;
+bool needToInit = false;
+bool nightMode = false;
 
 static void onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ )
 {
@@ -273,42 +298,25 @@ static void onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ )
     }
 }
 
-int main( int argc, char** argv )
+
+void imageCb(const sensor_msgs::ImageConstPtr& msg)
 {
-    VideoCapture cap;
-    TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
-    Size subPixWinSize(10,10), winSize(31,31);
 
-    const int MAX_COUNT = 500;
-    bool needToInit = false;
-    bool nightMode = false;
-
-    help();
-    cv::CommandLineParser parser(argc, argv, "{@input|0|}");
-    string input = parser.get<string>("@input");
-
-    if( input.size() == 1 && isdigit(input[0]) )
-        cap.open(input[0] - '0');
-    else
-        cap.open(input);
-
-    if( !cap.isOpened() )
-    {
-        cout << "Could not initialize capturing...\n";
-        return 0;
+    cv_bridge::CvImagePtr cv_ptr;
+    try {
+        cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+    }
+    catch (cv_bridge::Exception &e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
     }
 
-    namedWindow( "LK Demo", 1 );
-    setMouseCallback( "LK Demo", onMouse, 0 );
+    frame=cv_ptr->image;
 
-    Mat gray, prevGray, image, frame;
-    vector<Point2f> points[2];
 
-    for(;;)
-    {
-        cap >> frame;
+
         if( frame.empty() )
-            break;
+            return;
 
         frame.copyTo(image);
         cvtColor(image, gray, COLOR_BGR2GRAY);
@@ -366,7 +374,7 @@ int main( int argc, char** argv )
 
         char c = (char)waitKey(10);
         if( c == 27 )
-            break;
+            return;
         switch( c )
         {
             case 'r':
@@ -383,7 +391,21 @@ int main( int argc, char** argv )
 
         std::swap(points[1], points[0]);
         cv::swap(prevGray, gray);
-    }
 
+
+}
+
+int main( int argc, char** argv ) {
+
+    ros::init(argc, argv, "LKDEMO");
+    ros::NodeHandle nh;
+    image_transport::ImageTransport it(nh);
+    image_transport::Subscriber image_sub;
+    image_transport::Publisher image_pub;
+    image_sub = it.subscribe("image_raw", 1, imageCb);
+    namedWindow( "LK Demo", 1 );
+    setMouseCallback( "LK Demo", onMouse, 0 );
+    ros::spin();
     return 0;
 }
+
