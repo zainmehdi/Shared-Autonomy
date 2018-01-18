@@ -425,7 +425,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 //        vpColVector v(2);
 //
 //
-        cout << "Point 0 size: " << points[0].size() << endl;
+
 //
 //
 //
@@ -445,7 +445,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
         //   robot.setVelocity(vpRobot::REFERENCE_FRAME, v);
 
-
+        cout << "n: " << n << endl;
         first_run = false;
 
 
