@@ -344,9 +344,9 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
     if(path_drawn && features_found) {
 
-        cout << "\n**********************************\n"
-             << "\n Visual Servoing Loop has started\n"
-             << "\n**********************************\n";
+//        cout << "\n**********************************\n"
+//             << "\n Visual Servoing Loop has started\n"
+//             << "\n**********************************\n";
 
 
 
@@ -425,18 +425,19 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 //        vpColVector v(2);
 //
 //
-//        cout << "Point 0 size: " << points[0].size() << endl;
+        cout << "Point 0 size: " << points[0].size() << endl;
 //
 //
 //
-//        v.linear.y = -(-points[0][n].x + desired_point.x) / 800;
-//        v.linear.z = -(-points[0][n].y + desired_point.y) / 1000;
 
-        v.linear.y = 0;
-        v.linear.z = 0;
-
-        vel_pub.publish(v);
         circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
+
+//        v.linear.y = (-points[0][n].x + desired_point.x) / 800;
+//        v.linear.x = (-points[0][n].y + desired_point.y) / 1000;
+
+
+//        vel_pub.publish(v);
+
 
         circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
 
@@ -448,16 +449,16 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
         first_run = false;
 
 
-
-        if(distance(desired_point,points[0][n]) < 3)
-        {
-
-            n++;
-            if(n==points[0].size())
-                waitKey();
-
-
-        }
+//
+//        if(distance(desired_point,points[0][n]) < 3)
+//        {
+//
+//            n++;
+//            if(n==points[0].size())
+//                waitKey();
+//
+//
+//        }
 
 
 
@@ -467,6 +468,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
         if (c == 27)
             return;
         switch (c) {
+
             case 'r':
                 needToInit = true;
                 pp.clear();
@@ -485,7 +487,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                 feature_on_path_found=false;
                 break;
             case 'n':
-                break;
+                n++;
         }
 
     }
@@ -498,7 +500,7 @@ int main(int argc, char **argv) {
 
     ros::init(argc, argv, "unity_autonomy");
     ros::NodeHandle nh;
-    desired_point = Point(320, 470);
+    desired_point = Point(320, 440);
     image_transport::ImageTransport it(nh);
     image_transport::Subscriber image_sub;
     vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
