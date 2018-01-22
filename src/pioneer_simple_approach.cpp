@@ -239,7 +239,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
 
 
-    if (path_drawn &&!features_found ) {
+    if (path_drawn  && !features_found ) {
 
 
 
@@ -260,27 +260,38 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
         if (needToInit) {
 
             cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-            mask = Mat::zeros(gray.size(), CV_8U);
+
             for (auto it:selected_points) {
 
-
+                mask = Mat::zeros(gray.size(), CV_8U);
                 roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
                 roi = Scalar(255, 255, 255);
 
+
+                // automatic initialization
+                goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 1, mask, 3, 5, 0, 0.04);
+//                cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
+
+
+                for (auto index:point_buffer) {
+
+                    points[1].push_back(index);
+
+                }
             }
-            // automatic initialization
-            goodFeaturesToTrack(gray,point_buffer, MAX_COUNT, 0.01, 1, mask, 3, 5, 0, 0.04);
-            cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
-            imshow("Mask", mask);
-
-            for (auto index:point_buffer) {
-
-                points[1].push_back(index);
-
-            }
 
 
-            features_found = true;
+//            mask = Mat::zeros(gray.size(), CV_8U);
+//            for (auto it:selected_points) {
+//
+//                roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
+//                roi = Scalar(255, 255, 255);
+//            }
+//            imshow("Mask", mask);
+
+
+                features_found = true;
+            needToInit=false;
         }
 
 
@@ -293,13 +304,16 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
         }
 
-        for (auto index:line_points) {
+//        for (auto index:line_points) {
+//
+////            circle(image, Point(index), 8, CV_RGB(255, 255, 0), 0.5, 8, 0);
+////        }
 
-            circle(image, Point(index), 8, CV_RGB(255, 255, 0), 0.5, 8, 0);
-        }
-
-        needToInit = false;
         circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+        if (!points[1].empty())
+            circle(image, points[1][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
+
         imshow("LK Demo", image);
 
         char c = (char) waitKey(30);
@@ -328,7 +342,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                 feature_on_path_found=false;
                 break;
             case 'n':
-                nightMode = !nightMode;
+              //  nightMode = !nightMode;
+                n++;
                 break;
         }
 
@@ -344,9 +359,12 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
     if(path_drawn && features_found) {
 
-//        cout << "\n**********************************\n"
-//             << "\n Visual Servoing Loop has started\n"
-//             << "\n**********************************\n";
+
+
+           cout << "\n**********************************\n"
+                << "\n Visual Servoing Loop has started\n"
+                << "\n**********************************\n";
+
 
 
 
@@ -432,12 +450,14 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
         circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
 
-//        v.linear.y = (-points[0][n].x + desired_point.x) / 800;
-//        v.linear.x = (-points[0][n].y + desired_point.y) / 1000;
+        v.linear.y = (-points[0][n].x + desired_point.x) / 800;
+        v.linear.x = (-points[0][n].y + desired_point.y) / 1000;
+        v.angular.z= (atan2(v.linear.y*800,v.linear.x*1000));
 
+//        v.angular.z=1;
+        vel_pub.publish(v);
 
-//        vel_pub.publish(v);
-
+        cout << "Angular Velocity: " << v.angular.z << endl;
 
         circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
 
@@ -445,20 +465,20 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
         //   robot.setVelocity(vpRobot::REFERENCE_FRAME, v);
 
-        cout << "n: " << n << endl;
+//        cout << "n: " << n << endl;
         first_run = false;
 
 
-//
-//        if(distance(desired_point,points[0][n]) < 3)
-//        {
-//
-//            n++;
-//            if(n==points[0].size())
-//                waitKey();
-//
-//
-//        }
+
+        if(distance(desired_point,points[0][n]) < 1)
+        {
+
+            n++;
+            if(n==points[0].size())
+                waitKey();
+
+
+        }
 
 
 
@@ -500,7 +520,7 @@ int main(int argc, char **argv) {
 
     ros::init(argc, argv, "unity_autonomy");
     ros::NodeHandle nh;
-    desired_point = Point(320, 440);
+    desired_point = Point(320, 475);
     image_transport::ImageTransport it(nh);
     image_transport::Subscriber image_sub;
     vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
