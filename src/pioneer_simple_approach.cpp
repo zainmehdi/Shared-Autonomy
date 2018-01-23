@@ -227,6 +227,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
         switch (c) {
             case 'c':
                 line_points.clear();
+                points[0].clear();
+                points[1].clear();
                 selected_points.clear();
                 path_drawn= false;
                 break;

@@ -74,28 +74,10 @@ bool drag;
 
 double camera_height=40;
 double camera_pitch = 45;
-
-
-
-/*!
-  \example tutorial_ros_node_pioneer_visual_servo.cpp
-
-  Example that shows how to create a ROS node able to control the Pioneer mobile robot by IBVS visual servoing with respect to a blob.
-  The current visual features that are used are s = (x, log(Z/Z*)). The desired one are s* = (x*, 0), with:
-  - x the abscisse of the point corresponding to the blob center of gravity measured at each iteration,
-  - x* the desired abscisse position of the point (x* = 0)
-  - Z the depth of the point measured at each iteration
-  - Z* the desired depth of the point equal to the initial one.
-
-  The degrees of freedom that are controlled are (vx, wz), where wz is the rotational velocity
-  and vx the translational velocity of the mobile platform at point M located at the middle
-  between the two wheels.
-
-  The feature x allows to control wy, while log(Z/Z*) allows to control vz.
-  The value of x is measured thanks to a blob tracker.
-  The value of Z is estimated from the surface of the blob that is proportional to the depth Z.
-
-  */
+ros::Publisher vel_pub;
+bool path_drawn=false;
+bool features_found=false;
+geometry_msgs::Twist v;
 
 
 
@@ -132,64 +114,33 @@ double derivative(Point a, Point b)
     return ((b.y-a.y)/(b.x-a.x));
 }
 
-int main(int argc, char **argv) {
+void imageCb(const sensor_msgs::ImageConstPtr& msg){
+
+
+    cv_bridge::CvImagePtr cv_ptr;
     try {
-        vpImage<unsigned char> I; // Create a gray level image container
-        double depth = 1;
-        double lambda = 0.6;
-        double coef = 1. / 6.77; // Scale parameter used to estimate the depth Z of the blob from its surface
-        desired_point = Point(300, 450);
+        cv_ptr = cv_bridge::toCvCopy(msg, enc::BGR8);
+    }
+    catch (cv_bridge::Exception &e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
 
-        namedWindow("LK Demo", 1);
-        setMouseCallback("LK Demo", onMouse, 0);
-        vpROSRobotPioneer robot;
-        robot.setCmdVelTopic("/RosAria/cmd_vel");
-        robot.init(argc, argv);
-
-        // Wait 3 sec to be sure that the low level Aria thread used to control
-        // the robot is started. Without this delay we experienced a delay (arround 2.2 sec)
-        // between the velocity send to the robot and the velocity that is really applied
-        // to the wheels.
-        vpTime::sleepMs(3000);
-
-        std::cout << "Robot connected" << std::endl;
-
-        // Camera parameters. In this experiment we don't need a precise calibration of the camera
-        vpCameraParameters cam;
-
-        // Create a grabber based on libdc1394-2.x third party lib (for firewire cameras under Linux)
-        vpROSGrabber g;
-        g.setCameraInfoTopic("/usb_cam/camera_info");
-        g.setImageTopic("/usb_cam/image_raw");
-        g.setRectify(true);
-        g.open(argc, argv);
-        // Get camera parameters from /camera/camera_info topic
-        if (g.getCameraInfo(cam) == false)
-            cam.initPersProjWithoutDistortion(600, 600, I.getWidth() / 2, I.getHeight() / 2);
-
-
+    frame=cv_ptr->image;
 
         /// OpenCV part starts here that finds Good features and uses Shi-Tomasi to track ///
         ///////////////////////////////////////////////////////////////////////////////////
 
 
-        while (1) {
+    if (!path_drawn)  {
 
-            g.acquire(I);
-            vpImageConvert::convert(I, image);
-            image.copyTo(frame);
-            circle(image, desired_point, 7, Scalar(0, 150, 0), -1, 8);
+        if( frame.empty() )
+            return;
 
-
-            if (frame.empty())
-                break;
-
-            //  frame.copyTo(image);
-            //  cvtColor(image, gray, COLOR_BGR2GRAY);
-
-            frame.copyTo(gray);
-            if (nightMode)
-                image = Scalar::all(0);
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
+        if (nightMode)
+            image = Scalar::all(0);
 
             if (needToInit) {
                 // automatic initialization
@@ -241,12 +192,14 @@ int main(int argc, char **argv) {
                 addRemovePt = false;
             }
 
+             circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
             needToInit = false;
             imshow("LK Demo", image);
 
             char c = (char) waitKey(10);
             if (c == 27)
-                break;
+                path_drawn=true;
             switch (c) {
                 case 'r':
                     needToInit = true;
@@ -258,6 +211,7 @@ int main(int argc, char **argv) {
                     points[1].clear();
                     line_points.clear();
                     line_points_circle.clear();
+                    path_drawn= false;
                     cout<<"Points Cleared \n";
                     break;
                 case 'n':
@@ -279,35 +233,15 @@ int main(int argc, char **argv) {
         ////////////////////////////////////////////////////////////////////////////////
 
 
-        // Create an image viewer
-        vpDisplayX d(I, 10, 10, "Current frame");
-        vpDisplay::display(I);
-        vpDisplay::flush(I);
+    if (path_drawn  ) {
+        if( frame.empty() )
+            return;
 
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
+        if (nightMode)
+            image = Scalar::all(0);
 
-        while (1) {
-            // Acquire a new image
-//            auto started = std::chrono::high_resolution_clock::now();
-
-            g.acquire(I);
-
-
-            /// OpenCV part starts here that finds Good features and uses Shi-Tomasi to track ///
-            ///////////////////////////////////////////////////////////////////////////////////
-
-            vpImageConvert::convert(I, image);
-            image.copyTo(frame);
-
-
-            if (frame.empty())
-                break;
-
-//                frame.copyTo(image);
-//                cvtColor(image, gray, COLOR_BGR2GRAY);
-
-            frame.copyTo(gray);
-            if (nightMode)
-                image = Scalar::all(0);
 
             if (needToInit) {
                 // automatic initialization
@@ -326,7 +260,7 @@ int main(int argc, char **argv) {
                 /// Find rigid transformation between points of optical flow and use it to transform your own points
                 Mat transformation=estimateRigidTransform(points[0],points[1],true);
 //                Mat transformation=estimateRigidTransform(points[0],points[1],true);
-                cout<<"Transformnation:" <<transformation<<endl;
+//                cout<<"Transformnation:" <<transformation<<endl;
 
                 for (i = k = 0; i < points[1].size(); i++) {
                     if (addRemovePt) {
@@ -343,21 +277,13 @@ int main(int argc, char **argv) {
                     circle(image, points[1][i], 3, Scalar(0, 255, 0), -1, 8);
                     circle(image, desired_point, 5, Scalar(0, 150, 0), -1, 8);
                     point1 = points[1][i];
-//                    cout << "Points Location: " << points[1][i] << "\n";
+
                 }
 
 
 
                 transform(line_points,transformed_points,transformation);
                 line_points=transformed_points;
-//
-//                if(points[1].size()>3)
-//                {
-//                    transform(line_points,transformed_points,transformation);
-//                }else
-//                {
-//                    transformed_points=line_points;
-//                }
 
 
 
@@ -367,18 +293,8 @@ int main(int argc, char **argv) {
                     circle(image,Point(index), 5, CV_RGB(255, 255, 0),1,8,0);
 
 
-//                   line_points=transformed_points;
-
-
                 }
 
-
-//                for(auto r:line_points_world)
-//                {
-//
-//                  r.y=r.y-70;
-//
-//                }
 
 
                 points[1].resize(k);
@@ -394,8 +310,9 @@ int main(int argc, char **argv) {
 
 
             needToInit = false;
+            features_found = true;
 
-
+            circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
             imshow("LK Demo", image);
             waitKey(1);
 
@@ -414,39 +331,12 @@ int main(int argc, char **argv) {
 
             //////////////////////////////OpenCV part ends here /////////////////////////////
             ////////////////////////////////////////////////////////////////////////////////
+        v.linear.y = (-line_points[n].x + desired_point.x) / 800;
+        v.linear.x = (-line_points[n].y + desired_point.y) / 1000;
+        v.angular.z= (atan2(v.linear.y*800,v.linear.x*1000));
 
-            vpColVector v(2);
-//
-//            v[1] = (-transformed_points[n].x + desired_point.x)/400;
-//            v[0] = (-transformed_points[n].y+280 + desired_point.y)/800;
-
-
-            v[1] = (-line_points[n].x + desired_point.x)/400;
-            v[0] = (-line_points[n].y + desired_point.y)/800;
-
-//            v[0] = (-line_points_world[n].y + desired_point.y)/600;
-
-            cout<<"Desired Point: "<<desired_point<<endl;
-//            cout<<"Current Point image : "<<transformed_points[n]<<endl;
-//            cout<<"Current Point robot: "<<line_points_world[n]<<endl;
-
-
-
-//            auto done = std::chrono::high_resolution_clock::now();
-//            std::chrono::duration<double> elapsed = done - started;
-//            std::cout <<"Time :"<< elapsed.count()<<endl;
-
-//            v[1] = (-line_points[n].x + desired_point.x)*0.002+ 2*((current.x-previous.x)/1200);
-//            v[0] = (-line_points[n].y + desired_point.y)*0.002 +0.5*((current.y-previous.y)/1200);
-
-
-
-
-
-            robot.setVelocity(vpRobot::REFERENCE_FRAME, v);
-
-
-
+//        v.angular.z=1;
+        vel_pub.publish(v);
 
 
 
@@ -454,20 +344,18 @@ int main(int argc, char **argv) {
             {
                 n++;
                 if(n==line_points.size())
-                    break;
+                    return;
                 // needToInit=true;
 
             }
 
 
 
-//            cout<<"Set velocity: "<<v[1].<<" "<<v[2]<endl;
 
-            th_prev=v[1];
 
             char c = (char) waitKey(10);
             if (c == 27)
-                break;
+                return;
             switch (c) {
                 case 'r':
                     needToInit = true;
@@ -488,12 +376,23 @@ int main(int argc, char **argv) {
 
 
         }
-        return 0;
 
-    }
 
-    catch (vpException e) {
-        std::cout << "Catch an exception: " << e << std::endl;
-        return 1;
-    }
+}
+
+
+int main(int argc, char **argv) {
+
+
+    ros::init(argc, argv, "unity_autonomy");
+    ros::NodeHandle nh;
+    desired_point = Point(320, 475);
+    image_transport::ImageTransport it(nh);
+    image_transport::Subscriber image_sub;
+    vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
+    image_sub = it.subscribe("image_raw", 1,imageCb);
+    namedWindow( "LK Demo", 1 );
+    setMouseCallback( "LK Demo", onMouse, 0 );
+    ros::spin();
+    return 0;
 }
