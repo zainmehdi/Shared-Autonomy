@@ -148,4 +148,14 @@ public:
 
 };
 
+enum path_feature_state{
+    PATH_DRAWING, FEATURE_FINDING,VISUAL_SERVOING
+};
+path_feature_state pstate;
+
+enum strategy_state{
+    GLOBAL_FEATURES,FEATURES_ON_LINE,RELATIVE_TRANSFORMATION
+};
+strategy_state sstate;
+
 #endif //PROJECT_SHARED_AUTONOMY_H
