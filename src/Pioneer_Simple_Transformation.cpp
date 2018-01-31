@@ -196,6 +196,12 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
 
             imshow("LK Demo", image);
 
+            v.linear.y = 0;
+            v.linear.x = 0;
+            v.angular.z= 0;
+
+            vel_pub.publish(v);
+
 
         }
 

@@ -236,6 +236,11 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
         circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
         imshow("LK Demo", image);
+        v.linear.y = 0;
+        v.linear.x = 0;
+        v.angular.z= 0;
+
+        vel_pub.publish(v);
 
     }
 
@@ -503,6 +508,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                 points[1].clear();
                 line_points.clear();
                 line_points_circle.clear();
+                n=0;
                 features_found = false;
                 cout << "Points Cleared \n";
                 path_drawn= false;
