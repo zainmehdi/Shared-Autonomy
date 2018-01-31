@@ -54,12 +54,22 @@ add_library(local_autonomylib
 target_link_libraries(local_autonomylib
         ${OpenCV_LIBRARIES}
         ${catkin_LIBRARIES}
+        )
 
+add_library(shared_autonomylib
+        src/Shared_Autonomy.cpp
+        )
+
+
+## Specify libraries to link a library or executable target against
+target_link_libraries(shared_autonomylib
+        ${OpenCV_LIBRARIES}
+        ${catkin_LIBRARIES}
         )
 
 catkin_package(
         INCLUDE_DIRS include
-        LIBRARIES local_autonomylib ${OpenCV_LIBRARIES} ${catkin_LIBRARIES}
+        LIBRARIES shared_autonomylib local_autonomylib ${OpenCV_LIBRARIES} ${catkin_LIBRARIES}
         CATKIN_DEPENDS cv_bridge roscpp rospy std_msgs
        # DEPENDS system_lib
 )
@@ -178,3 +188,11 @@ target_link_libraries(Pioneer_Simple_Original ${OpenCV_LIBRARIES} ${catkin_LIBRA
 
 add_executable(Pioneer_Simple_Transformation src/Pioneer_Simple_Transformation.cpp)
 target_link_libraries(Pioneer_Simple_Transformation ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
+
+add_executable(Shared_Autonomy src/Shared_Autonomy_main.cpp)
+target_link_libraries(Shared_Autonomy
+        shared_autonomylib
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBRARIES}
+
+        )

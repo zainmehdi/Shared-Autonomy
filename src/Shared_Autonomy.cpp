@@ -1,88 +1,85 @@
 //
-// Created by zain on 17. 12. 17.
+// Created by kari on 18. 1. 31.
 //
 
-// Program that uses images coming from unity
-
-#include <iostream>
-#include "ctime"
-#include "chrono"
-#include "ros/ros.h"
-#include "opencv2/video/tracking.hpp"
-#include "opencv2/imgproc.hpp"
-#include "opencv2/videoio.hpp"
-#include "opencv2/highgui.hpp"
-
-#include <iostream>
-#include <ctype.h>
-#include "ros/ros.h"
-#include "image_transport/image_transport.h"
-#include "geometry_msgs/Twist.h"
-#include "cv_bridge/cv_bridge.h"
+#include "opencv_test/Shared_Autonomy.h"
 
 
-using namespace cv;
-using namespace std;
-namespace enc = sensor_msgs::image_encodings;
+int Shared_Autonomy_Vine::MAX_COUNT = 500;
+int Shared_Autonomy_Vine::line_point_size;
+int Shared_Autonomy_Vine::n=0;
+int Shared_Autonomy_Vine::width=4;
+int Shared_Autonomy_Vine::height=4;
+int Shared_Autonomy_Vine::m=0;
+int Shared_Autonomy_Vine::circle_radius=2;
+int Shared_Autonomy_Vine::e=0;
 
+bool Shared_Autonomy_Vine::needToInit = false;
+bool Shared_Autonomy_Vine::nightMode = false;
+bool Shared_Autonomy_Vine::features_found=false;
+bool Shared_Autonomy_Vine::addRemovePt = false;
+bool Shared_Autonomy_Vine::feature_selected=false;
+bool Shared_Autonomy_Vine::first_run=true;
+
+bool Shared_Autonomy_Vine::path_drawn=false;
+bool Shared_Autonomy_Vine::feature_on_path_found=false;
+bool Shared_Autonomy_Vine::path_feature_found=false;
+bool Shared_Autonomy_Vine::drag;
+
+Mat Shared_Autonomy_Vine::gray, Shared_Autonomy_Vine::prevGray, Shared_Autonomy_Vine::image, Shared_Autonomy_Vine::frame;
+Mat Shared_Autonomy_Vine::mask;
+Mat Shared_Autonomy_Vine::roi;
+Mat Shared_Autonomy_Vine::transformation_bw_goal_nf;
+
+
+
+
+double Shared_Autonomy_Vine::th_prev =0;
+double Shared_Autonomy_Vine::t_y;
+double Shared_Autonomy_Vine::camera_height=40;
+double Shared_Autonomy_Vine::camera_pitch = 45;
+
+
+vector<Point2f> Shared_Autonomy_Vine::points[2];
+vector<Point2f> Shared_Autonomy_Vine::point_buffer;
+vector<Point2f> Shared_Autonomy_Vine::pp;
+vector<cv::Mat> Shared_Autonomy_Vine::transformation_bw_line;
+vector<Point> Shared_Autonomy_Vine::line_points;
+vector<Point> Shared_Autonomy_Vine::line_points_temp;
+vector<Point> Shared_Autonomy_Vine::line_points_world;
+vector<Point> Shared_Autonomy_Vine::transformed_points;
+vector<Point> Shared_Autonomy_Vine::line_points_circle;
+vector<Point> Shared_Autonomy_Vine::selected_points;
+
+Point2f Shared_Autonomy_Vine::point;
+Point2f Shared_Autonomy_Vine::point1;
+Point2f Shared_Autonomy_Vine::desired_point;
+Point2f Shared_Autonomy_Vine::previous,current;
+Point2f Shared_Autonomy_Vine::nearest_feature;
+
+
+Point Shared_Autonomy_Vine::Target_point;
+Point Shared_Autonomy_Vine::Target_point_prev;
+Point Shared_Autonomy_Vine::p;
+
+geometry_msgs::Twist Shared_Autonomy_Vine::v;
 TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
 Size subPixWinSize(10,10), winSize(30,30);
-vector<cv::Mat> transformation_bw_line;
-Mat transformation_bw_goal_nf;
-int MAX_COUNT = 500;
-bool needToInit = false;
-bool nightMode = false;
-bool features_found=false;
-double t_y;
-int line_point_size;
-int n=0;
-int width=4;
-int height=4;
-double th_prev =0;
-Mat gray, prevGray, image, frame;
-Mat mask;
-Mat roi;
-vector<Point2f> points[2];
-vector<Point2f> point_buffer;
-int m=0;
-Point2f point;
-Point2f point1;
-Point2f desired_point;
-Point2f previous,current;
-Point2f nearest_feature;
-bool addRemovePt = false;
-bool feature_selected=false;
-bool first_run=true;
-int circle_radius=2;
-vector<Point> line_points;
-vector<Point> line_points_temp;
-vector<Point> line_points_world;
-vector<Point> transformed_points;
-vector<Point> line_points_circle;
-vector<Point> selected_points;
-geometry_msgs::Twist v;
 
-bool path_drawn=false;
-bool feature_on_path_found=false;
-bool path_feature_found=false;
-
-ros::Publisher vel_pub;
-Point Target_point;
-Point Target_point_prev;
-Point p;
-
-vector<Point2f> pp;
-int e=0;
-bool drag;
-
-double camera_height=40;
-double camera_pitch = 45;
+Shared_Autonomy_Vine::Shared_Autonomy_Vine(): it(nh) {
 
 
 
+    vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
+    image_sub = it.subscribe("image_raw", 1,
+                             &Shared_Autonomy_Vine::imageCb, this);
+    namedWindow( "LK Demo", 1 );
+    setMouseCallback( "LK Demo", onMouse, 0 );
+    desired_point = Point(320, 475);
 
+}
 
-void points_selector(vector<Point> &all_points){
+void Shared_Autonomy_Vine::points_selector(vector<Point> &all_points){
 
 
     for(auto i:all_points)
@@ -111,66 +108,50 @@ void points_selector(vector<Point> &all_points){
 
 }
 
- void onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ )
-{
-    if( event == EVENT_LBUTTONDOWN && !drag )
-    {
+void Shared_Autonomy_Vine::onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ ) {
+    if (event == EVENT_LBUTTONDOWN && !drag) {
 
-        drag=true;
-    }
+        drag = true;
+    } else if (event == EVENT_MOUSEMOVE && drag) {
 
-    else if( event == EVENT_MOUSEMOVE && drag )
-    {
-
-        line_points.push_back(CvPoint(x,y));
-        line_points_temp.push_back(CvPoint(x,y));
+        line_points.push_back(CvPoint(x, y));
+        line_points_temp.push_back(CvPoint(x, y));
         points_selector(line_points_temp);
 
 
-
+    } else if (event == EVENT_LBUTTONUP) {
+        drag = false;
     }
+}
 
-    else if(event ==EVENT_LBUTTONUP)
+    Mat Shared_Autonomy_Vine::transformation_calculate(Point2f x, Point2f y)
     {
-        drag=false;
+        double Tx=y.x-x.x;
+        double Ty=y.y-x.y;
+        double theta=atan((y.y-x.y)/(y.x-x.x));
+
+        Mat T=Mat_<double>(3,3);
+        T.at<double>(0,0)=cos(theta*3.1428/180);
+        T.at<double>(0,1)=-sin(theta*3.1428/180);
+        T.at<double>(0,2)=Tx;
+        T.at<double>(1,0)=sin(theta*3.1428/180);
+        T.at<double>(1,1)=cos(theta*3.1428/180);
+        T.at<double>(1,2)=Ty;
+        T.at<double>(2,0)=0;
+        T.at<double>(2,1)=0;
+        T.at<double>(2,2)=1;
+
+        return T;
     }
 
-}
 
-Mat transformation_calculate(Point2f x, Point2f y)
-{
-    double Tx=y.x-x.x;
-    double Ty=y.y-x.y;
-    double theta=atan((y.y-x.y)/(y.x-x.x));
-
-    Mat T=Mat_<double>(3,3);
-    T.at<double>(0,0)=cos(theta*3.1428/180);
-    T.at<double>(0,1)=-sin(theta*3.1428/180);
-    T.at<double>(0,2)=Tx;
-    T.at<double>(1,0)=sin(theta*3.1428/180);
-    T.at<double>(1,1)=cos(theta*3.1428/180);
-    T.at<double>(1,2)=Ty;
-    T.at<double>(2,0)=0;
-    T.at<double>(2,1)=0;
-    T.at<double>(2,2)=1;
-
-    return T;
-}
-
-double distance(Point a,Point b)
+double Shared_Autonomy_Vine::distance(Point a,Point b)
 {
     return sqrt(pow(b.x-a.x,2)+(b.y-a.y,2));
 }
 
-double derivative(Point a, Point b)
-{
-    return ((b.y-a.y)/(b.x-a.x));
-}
 
-
-
-
-void imageCb(const sensor_msgs::ImageConstPtr& msg)
+void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
 {
     /// OpenCV part starts here that finds Good features and uses Shi-Tomasi to track ///
     ///////////////////////////////////////////////////////////////////////////////////
@@ -294,7 +275,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 //            imshow("Mask", mask);
 
 
-                features_found = true;
+            features_found = true;
             needToInit=false;
         }
 
@@ -346,7 +327,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                 feature_on_path_found=false;
                 break;
             case 'n':
-              //  nightMode = !nightMode;
+                //  nightMode = !nightMode;
                 n++;
                 break;
         }
@@ -365,9 +346,9 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
 
 
-           cout << "\n**********************************\n"
-                << "\n Visual Servoing Loop has started\n"
-                << "\n**********************************\n";
+        cout << "\n**********************************\n"
+             << "\n Visual Servoing Loop has started\n"
+             << "\n**********************************\n";
 
 
 
@@ -395,16 +376,16 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
                 roi = Scalar(255, 255, 255);
 
             }
-                // automatic initialization
-                goodFeaturesToTrack(gray,point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
-                cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
-                imshow("Mask", mask);
+            // automatic initialization
+            goodFeaturesToTrack(gray,point_buffer, MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
+            cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
+            imshow("Mask", mask);
 
-                for (auto index:point_buffer) {
+            for (auto index:point_buffer) {
 
-                    points[1].push_back(index);
+                points[1].push_back(index);
 
-                }
+            }
 
 
 
@@ -516,22 +497,4 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
         }
 
     }
-}
-
-
-
-int main(int argc, char **argv) {
-
-
-    ros::init(argc, argv, "unity_autonomy");
-    ros::NodeHandle nh;
-    desired_point = Point(320, 475);
-    image_transport::ImageTransport it(nh);
-    image_transport::Subscriber image_sub;
-    vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
-    image_sub = it.subscribe("image_raw", 1,imageCb);
-    namedWindow( "LK Demo", 1 );
-    setMouseCallback( "LK Demo", onMouse, 0 );
-    ros::spin();
-    return 0;
 }

@@ -37,9 +37,6 @@
 #include "image_transport/image_transport.h"
 #include "cv_bridge/cv_bridge.h"
 
-#if defined(VISP_HAVE_DC1394_2) && defined(VISP_HAVE_X11)
-#  define TEST_COULD_BE_ACHIEVED
-#endif
 
 using namespace cv;
 using namespace std;
@@ -233,7 +230,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg){
         ////////////////////////////////////////////////////////////////////////////////
 
 
-    if (path_drawn  ) {
+    if (path_drawn ) {
         if( frame.empty() )
             return;
 
