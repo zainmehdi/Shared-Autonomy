@@ -72,12 +72,12 @@ Size subPixWinSize(10,10), winSize(30,30);
 Shared_Autonomy_Vine::Shared_Autonomy_Vine(): it(nh) {
 
 
-    desired_point = Point(320, 475);                                                    // reference point that will be followed in VS
+    desired_point = Point(320, 475);                                                        // reference point that will be followed in VS
     vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
     image_sub = it.subscribe("image_raw", 1, &Shared_Autonomy_Vine::imageCb, this);
 
-    pstate= PATH_DRAWING;                                                               // setting the current state of the machine to path drawing mode
-    sstate = FEATURES_ON_LINE;                                                          // by default we will find features on path to for servoing
+    pstate= FEATURE_FINDING;                                                               // setting the current state of the machine to path drawing mode
+    sstate = PATH_DRAWING;                                                                 // by default we will find features on path to for servoing
 
     namedWindow( "LK Demo", 1 );
     setMouseCallback( "LK Demo", onMouse, 0 );
@@ -188,15 +188,321 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
     switch (sstate)
     {
 
+        case PATH_DRAWING:
+        {
+            ///************************ User draws a path **********************
+            /// The first step would always be to draw a path so that it could be followed ///
 
-        /*
-         * *************************************************************************************************************************
-         * This is the case where we find global features in the whole image and use them to update the path the user drew.
-         * Optical flow is used to track features' displacement in images and update the path as a function of image displacement
-         */
+            if( frame.empty() )
+                return;
+
+            frame.copyTo(image);
+            cvtColor(image, gray, COLOR_BGR2GRAY);
+            if (nightMode)
+                image = Scalar::all(0);
+
+            for (auto index:line_points) {
+
+                circle(image, Point(index), 5, CV_RGB(255, 255, 0), 1, 8, 0);
+            }
+
+            for (auto g:selected_points) {
+                rectangle(image, Point(g.x - width / 2, g.y - height / 2), Point(g.x + width / 2, g.y + height / 2),
+                          CV_RGB(255, 0, 0), 1, 8, 0);
+
+            }
+
+            char c = (char) waitKey(10);
+            if (c == 27)
+            {
+                pstate=FEATURE_FINDING;
+                sstate=RELATIVE_TRANSFORMATION;
+                cout<<"Entered Feature Finding \n";
+                return;
+
+            }
+
+            switch (c) {
+                case 'c':
+                    line_points.clear();
+                    points[0].clear();
+                    points[1].clear();
+                    selected_points.clear();
+                    break;
+            }
+
+            circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+
+            v.linear.y = 0;
+            v.linear.x = 0;
+            v.angular.z= 0;
+            vel_pub.publish(v);
+
+            imshow("LK Demo", image);
+
+            break;
+
+            ///************************** User draws a path-end *************************************///
+
+        }
+
+
+
+
+
+            /*
+             * *************************************************************************************************************************
+             * This is the case where we find global features in the whole image and use them to update the path the user drew.
+             * Optical flow is used to track features' displacement in images and update the path as a function of image displacement
+             */
 
         case GLOBAL_FEATURES:
         {
+
+            switch (pstate)
+            {
+                case FEATURE_FINDING:
+                {
+                    if( frame.empty() )
+                        return;
+
+                    frame.copyTo(image);
+                    cvtColor(image, gray, COLOR_BGR2GRAY);
+                    if (nightMode)
+                        image = Scalar::all(0);
+
+                    if (needToInit) {
+                        // automatic initialization
+                        goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, Mat(), 3, 3, 0, 0.04);
+                        cornerSubPix(gray, points[1], subPixWinSize, Size(-1, -1), termcrit);
+                        addRemovePt = false;
+                    } else if (!points[0].empty()) {
+                        size_t i, k;
+
+                        for (i = k = 0; i < points[1].size(); i++) {
+                            if (addRemovePt) {
+                                if (norm(point - points[1][i]) <= 5) {
+                                    addRemovePt = false;
+                                    continue;
+                                }
+                            }
+
+                            points[1][k++] = points[1][i];
+                            circle(image, points[1][i], 3, Scalar(0, 255, 0), -1, 8);
+                        }
+
+
+                        for(auto index:line_points)
+                        {
+
+                            circle(image,Point(index), 5, CV_RGB(255, 255, 0),1,8,0);
+                        }
+
+
+                        points[1].resize(k);
+
+                    }
+
+                    if (addRemovePt && points[1].size() < (size_t) MAX_COUNT) {
+                        vector<Point2f> tmp;
+                        tmp.push_back(point);
+                        cornerSubPix(gray, tmp, winSize, Size(-1, -1), termcrit);
+                        points[1].push_back(tmp[0]);
+                        addRemovePt = false;
+                    }
+
+                    circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+                    needToInit = false;
+                    imshow("LK Demo", image);
+
+                    char c = (char) waitKey(10);
+                    if (c == 27)
+                    {
+                        pstate=VISUAL_SERVOING;
+                        return;
+                    }
+
+                    switch (c) {
+                        case 'r':
+                            needToInit = true;
+                            cout<<"Re Initialized \n";
+                            break;
+
+                        case 'c':
+                            points[0].clear();
+                            points[1].clear();
+                            line_points.clear();
+                            line_points_circle.clear();
+                            sstate=PATH_DRAWING;
+                            cout<<"Points Cleared \n";
+                            break;
+                        case 'n':
+                            nightMode = !nightMode;
+                            break;
+                    }
+
+
+
+                    std::swap(points[1], points[0]);
+                    cv::swap(prevGray, gray);
+
+
+
+                    line_point_size=line_points.size();
+                    break;
+                }
+
+
+                case VISUAL_SERVOING:
+                {
+                    if( frame.empty() )
+                        return;
+
+                    frame.copyTo(image);
+                    cvtColor(image, gray, COLOR_BGR2GRAY);
+                    if (nightMode)
+                        image = Scalar::all(0);
+
+
+                    if (needToInit) {
+                        // automatic initialization
+                        goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, Mat(), 3, 3, 0, 0.04);
+                        cornerSubPix(gray, points[1], subPixWinSize, Size(-1, -1), termcrit);
+                        addRemovePt = false;
+                    } else if (!points[0].empty()) {
+                        vector<uchar> status;
+                        vector<float> err;
+                        if (prevGray.empty())
+                            gray.copyTo(prevGray);
+                        calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
+                                             3, termcrit, 0, 0.001);
+                        size_t i, k;
+
+                        /// Find rigid transformation between points of optical flow and use it to transform your own points
+                        Mat transformation=estimateRigidTransform(points[0],points[1],false);
+
+                        for (i = k = 0; i < points[1].size(); i++) {
+                            if (addRemovePt) {
+                                if (norm(point - points[1][i]) <= 5) {
+                                    addRemovePt = false;
+                                    continue;
+                                }
+                            }
+
+                            if (!status[i])
+                                continue;
+
+                            points[1][k++] = points[1][i];
+                            circle(image, points[1][i], 3, Scalar(0, 255, 0), -1, 8);
+                            circle(image, desired_point, 5, Scalar(0, 150, 0), -1, 8);
+                            point1 = points[1][i];
+
+                        }
+
+
+
+                        transform(line_points,transformed_points,transformation);
+                        line_points=transformed_points;
+
+
+
+                        for(auto index:line_points)
+                        {
+
+                            circle(image,Point(index), 5, CV_RGB(255, 255, 0),1,8,0);
+
+
+                        }
+
+
+
+                        points[1].resize(k);
+                    }
+
+                    if (addRemovePt && points[1].size() < (size_t) MAX_COUNT) {
+                        vector<Point2f> tmp;
+                        tmp.push_back(point);
+                        cornerSubPix(gray, tmp, winSize, Size(-1, -1), termcrit);
+                        points[1].push_back(tmp[0]);
+                        addRemovePt = false;
+                    }
+
+
+                    needToInit = false;
+                    features_found = true;
+
+                    circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+                    imshow("LK Demo", image);
+                    waitKey(1);
+
+
+
+                    std::swap(points[1], points[0]);
+                    cv::swap(prevGray, gray);
+
+                    Target_point_prev=Target_point;
+
+
+                    if(points[1].size()<30)
+                    {
+                        needToInit=true;
+                    }
+
+
+                    v.linear.y = (-line_points[n].x + desired_point.x) / 800;
+                    v.linear.x = (-line_points[n].y + desired_point.y) / 1000;
+                    v.angular.z= (atan2(v.linear.y*800,v.linear.x*1000));
+
+                    vel_pub.publish(v);
+
+
+
+                    if(distance(desired_point,line_points[n]) < 5)
+                    {
+                        n++;
+                        if(n==line_points.size())
+                            return;
+
+                    }
+
+
+
+
+
+                    char c = (char) waitKey(10);
+                    if (c == 27)
+                        return;
+                    switch (c) {
+                        case 'r':
+                            needToInit = true;
+                            cout<<"Re Initialized \n";
+                            break;
+
+                        case 'c':
+                            points[0].clear();
+                            points[1].clear();
+                            line_points.clear();
+                            line_points_circle.clear();
+                            sstate=PATH_DRAWING;
+                            cout<<"Points Cleared \n";
+                            break;
+                        case 'n':
+                            nightMode = !nightMode;
+                            break;
+                    }
+
+
+
+                    break;
+                }
+
+
+            }
+
+
+
             break;
         }
 
@@ -217,64 +523,6 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
         {
             switch (pstate)
             {
-                case PATH_DRAWING:
-                {
-                    ///************************ User draws a path **********************///
-
-                    if( frame.empty() )
-                        return;
-
-                    frame.copyTo(image);
-                    cvtColor(image, gray, COLOR_BGR2GRAY);
-                    if (nightMode)
-                        image = Scalar::all(0);
-
-                    for (auto index:line_points) {
-
-                        circle(image, Point(index), 5, CV_RGB(255, 255, 0), 1, 8, 0);
-                    }
-
-                    for (auto g:selected_points) {
-                        rectangle(image, Point(g.x - width / 2, g.y - height / 2), Point(g.x + width / 2, g.y + height / 2),
-                                  CV_RGB(255, 0, 0), 1, 8, 0);
-
-                    }
-
-                    char c = (char) waitKey(10);
-                    if (c == 27)
-                    {
-                        pstate=FEATURE_FINDING;
-                        cout<<"Entered Feature Finding \n";
-                        return;
-
-                    }
-
-                    switch (c) {
-                        case 'c':
-                            line_points.clear();
-                            points[0].clear();
-                            points[1].clear();
-                            selected_points.clear();
-                            break;
-                    }
-
-                    circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
-
-
-                    v.linear.y = 0;
-                    v.linear.x = 0;
-                    v.angular.z= 0;
-                    vel_pub.publish(v);
-
-                    imshow("LK Demo", image);
-
-                    break;
-
-                    ///************************** User draws a path-end *************************************///
-
-                }
-
-
 
                 case FEATURE_FINDING:
                 {
@@ -361,7 +609,7 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
                             line_points.clear();
                             line_points_circle.clear();
                             selected_points.clear();
-                            pstate=PATH_DRAWING;
+                            sstate=PATH_DRAWING;
                             features_found=false;
                             cout << "Points Cleared \n";
                             break;
@@ -499,7 +747,7 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
                             n=0;
                             features_found = false;
                             cout << "Points Cleared \n";
-                            pstate=PATH_DRAWING;
+                            sstate=PATH_DRAWING;
                             cout<<"Draw a path again \n";
                             break;
                         case 'n':
@@ -511,12 +759,13 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
 
                 }
 
-                break;
+
 
             }
 
+            break;
 
-            //***************************************************************************************************************************
+            //***************************************************Features on line -end************************************************************************
         }
 
 
@@ -533,6 +782,273 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
 
         case RELATIVE_TRANSFORMATION:
         {
+            switch (pstate)
+            {
+                case FEATURE_FINDING:
+                {
+                    if( frame.empty() )
+                        return;
+
+                    frame.copyTo(image);
+                    cvtColor(image, gray, COLOR_BGR2GRAY);
+                    if (nightMode)
+                        image = Scalar::all(0);
+
+                    if (needToInit)
+                    {
+                        // automatic initialization
+                        goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, Mat(), 3, 3, 0, 0.04);
+                        cornerSubPix(gray, points[1], subPixWinSize, Size(-1, -1), termcrit);
+                        addRemovePt = false;
+                        features_found=true;
+                    } else if (!points[0].empty()) {
+                        vector<uchar> status;
+                        vector<float> err;
+                        if (prevGray.empty())
+                            gray.copyTo(prevGray);
+                        calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
+                                             3, termcrit, 0, 0.001);
+                        size_t i, k;
+
+                        {
+                            if (addRemovePt) {
+                                if (norm(point - points[1][0]) <= 5) {
+                                    addRemovePt = false;
+                                    return;
+                                }
+                            }
+
+
+                            circle(image, points[1].back(), 3, Scalar(0, 200, 0), -1, 8);
+
+                        }
+
+
+
+
+                    }
+
+                    if (addRemovePt && points[1].size() < (size_t) MAX_COUNT) {
+                        vector<Point2f> tmp;
+                        tmp.push_back(point);
+                        cornerSubPix(gray, tmp, winSize, Size(-1, -1), termcrit);
+                        points[1].push_back(tmp[0]);
+                        addRemovePt = false;
+                        features_found=true;
+                    }
+
+
+                    for(auto index:line_points)
+                    {
+
+                        circle(image,Point(index), 5, CV_RGB(255, 255, 0),1,8,0);
+                    }
+
+                    needToInit = false;
+                    imshow("LK Demo", image);
+
+                    char c = (char) waitKey(10);
+                    if (c == 27)
+                        pstate=VISUAL_SERVOING;
+                    switch (c) {
+                        case 'r':
+                            needToInit = true;
+                            cout<<"Re Initialized \n";
+                            break;
+
+                        case 'c':
+                            points[0].clear();
+                            points[1].clear();
+                            line_points.clear();
+                            line_points_circle.clear();
+                            sstate-PATH_DRAWING;
+                            cout<<"Points Cleared \n";
+                            break;
+                        case 'n':
+                            nightMode = !nightMode;
+                            break;
+                    }
+
+                    std::swap(points[1], points[0]);
+                    cv::swap(prevGray, gray);
+
+
+                    break;
+                }
+
+                case VISUAL_SERVOING:
+                {
+
+                   cout<<"IN RELATIVE \n";
+
+                    if(points[0].empty())
+                    {
+                        cout<<"Yes points are emty \n";
+                    }
+
+                    if( frame.empty() )
+                        return;
+
+                    frame.copyTo(image);
+                    cvtColor(image, gray, COLOR_BGR2GRAY);
+
+                    if (nightMode)
+                        image = Scalar::all(0);
+
+
+                    if (needToInit) {
+                        // automatic initialization
+                goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, Mat(), 3, 3, 0, 0.04);
+                cornerSubPix(gray, points[1], subPixWinSize, Size(-1, -1), termcrit);
+                        addRemovePt = false;
+                        features_found=true;
+                    } else if (!points[0].empty()) {
+                        vector<uchar> status;
+                        vector<float> err;
+                        if (prevGray.empty())
+                            gray.copyTo(prevGray);
+                        calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
+                                             3, termcrit, 0, 0.001);
+
+
+
+                        if (addRemovePt) {
+                            if (norm(point - points[1][0]) <= 5) {
+                                addRemovePt = false;
+                                return;
+                            }
+                        }
+
+
+                        circle(image, points[1][0], 3, Scalar(0, 255, 0), -1, 8);
+                        circle(image, desired_point, 5, Scalar(0, 150, 0), -1, 8);
+
+
+
+                        Mat temp,temp_feature,line;
+                        temp.create(3,1,cv::DataType<double>::type) ;
+                        temp_feature.create(3,1,cv::DataType<double>::type) ;
+                        line.create(3,1,cv::DataType<double>::type) ;
+
+                        temp.at<double>(0,0)=points[1].back().x;
+                        temp.at<double>(1,0)=points[1].back().y;
+                        temp.at<double>(2,0)=1;
+
+
+                        cout<<"\nTFG_INV:"<<transformation_bw_goal_nf.inv(DECOMP_LU)<<"\n";
+                        cout<<"\ntemp:"<<temp<<"\n";
+
+                        temp_feature=transformation_bw_goal_nf.inv(DECOMP_LU)*temp;
+
+                        for(int i=0;i<transformation_bw_line.size();i++)
+                        {
+                            line=transformation_bw_line[i]*temp_feature;
+                            line_points[i].x=line.at<double>(0,0);
+                            line_points[i].y=line.at<double>(1,0);
+
+                        }
+
+
+
+
+
+
+                        for(auto index:line_points)
+                        {
+
+                            circle(image,Point(index), 5, CV_RGB(255, 255, 0),1,8,0);
+
+
+//                   line_points=transformed_points;
+
+                        }
+
+
+                    }
+
+                    if (addRemovePt && points[1].size() < (size_t) MAX_COUNT) {
+                        vector<Point2f> tmp;
+                        tmp.push_back(point);
+                        cornerSubPix(gray, tmp, winSize, Size(-1, -1), termcrit);
+                        points[1].push_back(tmp[0]);
+                        addRemovePt = false;
+                    }
+
+
+                    needToInit = false;
+
+
+                    imshow("LK Demo", image);
+
+
+
+
+                    std::swap(points[1], points[0]);
+                    cv::swap(prevGray, gray);
+
+
+
+                    //////////////////////////////OpenCV part ends here /////////////////////////////
+                    ////////////////////////////////////////////////////////////////////////////////
+
+
+                    v.linear.y = (-line_points[n].x + desired_point.x) / 800;
+                    v.linear.x = (-line_points[n].y + desired_point.y) / 1000;
+                    v.angular.z= (atan2(v.linear.y*800,v.linear.x*1000));
+
+                    vel_pub.publish(v);
+
+
+
+
+
+
+
+
+
+                    if(distance(desired_point,line_points[n]) < 5)
+                    {
+                        n++;
+                        if(n==line_points.size()-3)
+                            return;
+
+                        // needToInit=true;
+
+                    }
+
+
+
+                    char c = (char) waitKey(10);
+                    if (c == 27)
+                        return;
+                    switch (c) {
+                        case 'r':
+                            needToInit = true;
+                            cout<<"Re Initialized \n";
+                            break;
+
+                        case 'c':
+                            points[0].clear();
+                            points[1].clear();
+                            line_points.clear();
+                            line_points_circle.clear();
+                            sstate=PATH_DRAWING;
+                            cout<<"Points Cleared \n";
+                            break;
+                        case 'n':
+                            nightMode = !nightMode;
+                            break;
+                    }
+
+                    break;
+                }
+
+
+
+            }
+
+
+
             break;
         }
 
