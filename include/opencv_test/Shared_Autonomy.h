@@ -149,7 +149,7 @@ public:
 };
 
 enum path_feature_state{
-     FEATURE_FINDING,VISUAL_SERVOING
+     FEATURE_FINDING,VISUAL_SERVOING, FIRST_RUN
 };
 path_feature_state pstate;
 

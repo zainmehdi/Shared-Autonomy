@@ -19,11 +19,14 @@
 #include "image_transport/image_transport.h"
 #include "geometry_msgs/Twist.h"
 #include "cv_bridge/cv_bridge.h"
+#include "opencv2/xfeatures2d/nonfree.hpp"
+#include "opencv2/features2d.hpp"
 
 
 using namespace cv;
 using namespace std;
 namespace enc = sensor_msgs::image_encodings;
+using namespace cv::xfeatures2d;
 
 TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
 Size subPixWinSize(10,10), winSize(30,30);
@@ -77,8 +80,10 @@ bool drag;
 
 double camera_height=40;
 double camera_pitch = 45;
-
-
+Ptr<FeatureDetector> Surf;
+Ptr<SURF> Surf_detector;
+std::vector<KeyPoint> keypoints[2];
+std::vector<Mat> surf_descriptor[2];
 
 
 
@@ -274,6 +279,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
                 // automatic initialization
                 goodFeaturesToTrack(gray, point_buffer, MAX_COUNT, 0.01, 1, mask, 3, 5, 0, 0.04);
+
+
 //                cornerSubPix(gray, point_buffer, subPixWinSize, Size(-1, -1), termcrit);
 
 
@@ -328,6 +335,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
         }
 
         switch (c) {
+
+
             case 'r':
                 needToInit = true;
                 e = 0;
@@ -493,6 +502,23 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
             return;
         switch (c) {
 
+
+
+            case 's':
+            {
+                imwrite("/home/kari/surf_test1.jpg",gray);
+                imwrite("/home/kari/surf_test_mask.jpg",mask);
+                cout<<"Image 1 saved \n";
+
+            }
+
+            case 'd':
+            {
+                imwrite("/home/surf_test2.jpg",gray);
+                cout<<"Image 2 saved \n";
+
+            }
+
             case 'r':
                 needToInit = true;
                 pp.clear();
@@ -527,6 +553,8 @@ int main(int argc, char **argv) {
     ros::NodeHandle nh;
     desired_point = Point(320, 475);
     image_transport::ImageTransport it(nh);
+
+    Surf_detector=SURF::create(400);
     image_transport::Subscriber image_sub;
     vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
     image_sub = it.subscribe("image_raw", 1,imageCb);

@@ -849,7 +849,7 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
 
                     char c = (char) waitKey(10);
                     if (c == 27)
-                        pstate=VISUAL_SERVOING;
+                        pstate=FIRST_RUN;
                     switch (c) {
                         case 'r':
                             needToInit = true;
@@ -875,6 +875,35 @@ void Shared_Autonomy_Vine::imageCb(const sensor_msgs::ImageConstPtr& msg)
 
                     break;
                 }
+
+
+                case FIRST_RUN:
+                {
+                    line_point_size = line_points.size();
+
+
+                    double distance_current;
+                    double distance_previous = 2000000;
+                    int nearest_index;
+                    if (features_found) {
+
+                        transformation_bw_goal_nf = transformation_calculate(line_points.back(), points[0].back());
+
+                        cout << "\nTFG:" << transformation_bw_goal_nf << "\n";
+                    }
+
+                    waitKey();
+
+                    transformation_bw_line.resize(line_points.size());
+                    for (int i = 0; i < line_points.size(); i++) {
+                        transformation_bw_line[i].push_back(
+                                transformation_calculate(line_points[line_points.size() - 1], line_points[i]));
+
+                        pstate=VISUAL_SERVOING;
+                    }
+                    break;
+                }
+
 
                 case VISUAL_SERVOING:
                 {
