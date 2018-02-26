@@ -2,7 +2,15 @@
 // Created by kari on 18. 1. 1.
 //
 
-//
+/* This is the approach in which first I draw a path.
+ * Then I detect Features in the whole image
+ * I track those features in coming images using optical flow
+ * I update the position of path using transformation of those features
+ * Robot follows the path using optical flow
+ * This approach has drift issue beacuse view is not orthogonal
+ * */
+
+
 // Created by zain on 17. 12. 17.
 //
 

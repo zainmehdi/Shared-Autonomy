@@ -196,3 +196,6 @@ target_link_libraries(Shared_Autonomy
         ${OpenCV_LIBRARIES}
 
         )
+
+add_executable( gms_match_demo ./src/demo.cpp )
+target_link_libraries( gms_match_demo ${OpenCV_LIBRARIES} ${catkin_LIBRARIES} )

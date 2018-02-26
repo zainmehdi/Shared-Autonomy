@@ -1,244 +1,98 @@
-#include <iostream>
+/*
+ * @file SURF_FlannMatcher
+ * @brief SURF detector + descriptor + FLANN Matcher
+ * @author A. Huaman
+ */
 #include <stdio.h>
+#include <iostream>
 #include "opencv2/core.hpp"
-#include "opencv2/core/utility.hpp"
-#include "opencv2/core/ocl.hpp"
+#include "opencv2/features2d.hpp"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/highgui.hpp"
-#include "opencv2/features2d.hpp"
-#include "opencv2/calib3d.hpp"
-#include "opencv2/imgproc.hpp"
 #include "opencv2/xfeatures2d.hpp"
-
+#include "opencv2/video/tracking.hpp"
+using namespace std;
 using namespace cv;
 using namespace cv::xfeatures2d;
-
-const int LOOP_NUM = 3;
-const int GOOD_PTS_MAX = 20;
-const float GOOD_PORTION = 0.15f;
-
-int64 work_begin = 0;
-int64 work_end = 0;
-
-static void workBegin()
+void readme();
+/*
+ * @function main
+ * @brief Main function
+ */
+int main( int argc, char** argv )
 {
-    work_begin = getTickCount();
-}
+    if( argc != 4 )
+    { readme(); return -1; }
+    Mat img_1 = imread( argv[1], IMREAD_GRAYSCALE );
+    Mat img_2 = imread( argv[2], IMREAD_GRAYSCALE );
+    Mat mask= imread( argv[3], IMREAD_GRAYSCALE );
+    Mat kp;
+    if( !img_1.data || !img_2.data )
+    { std::cout<< " --(!) Error reading images " << std::endl; return -1; }
+    //-- Step 1: Detect the keypoints using SURF Detector, compute the descriptors
 
-static void workEnd()
-{
-    work_end = getTickCount() - work_begin;
-}
 
+    int minHessian = 400;
+//    Ptr<SURF> detector = SURF::create();
 
-static double getTime()
-{
-    return work_end /((double)getTickFrequency() )* 1000.;
-}
+    Ptr<DescriptorExtractor> extractor= SIFT::create();
 
-struct SURFDetector
-{
-    Ptr<Feature2D> surf;
-    SURFDetector(double hessian = 700.0)
+//    detector->setHessianThreshold(minHessian);
+    std::vector<KeyPoint> keypoints_1, keypoints_2;
+    Mat descriptors_1, descriptors_2;
+
+    Ptr<FeatureDetector> detector= ORB::create();
+    detector->detect(img_1,keypoints_1,mask);
+    detector->detect( img_2, keypoints_2);
+
+    extractor->compute(img_1,keypoints_1,descriptors_1);
+    extractor->compute(img_2,keypoints_2,descriptors_2);
+
+    drawKeypoints(img_1,keypoints_1,kp);
+    imshow("Keypoints in original image",kp);
+
+    //-- Step 2: Matching descriptor vectors using FLANN matcher
+
+    Ptr<DescriptorMatcher> matcher =DescriptorMatcher::create("FlannBased");
+    std::vector<vector< DMatch> > matches;
+    matcher->knnMatch(descriptors_1,descriptors_2,matches,2);
+    double max_dist = 0; double min_dist = 10;
+
+    //-- Quick calculation of max and min distances between keypoints
+
+    vector<DMatch> goodmatches;
+    goodmatches.reserve(matches.size());
+
+    for( int i = 0; i < matches.size(); i++ )
     {
-        surf = SURF::create(hessian);
+        if(matches[i].size()<2)
+            continue;
+        const DMatch &m1=matches[i][0];
+        const DMatch &m2=matches[i][1];
+
+        if(m1.distance <= 0.9* m2.distance)
+            goodmatches.push_back(m1);
     }
-    template<class T>
-    void operator()(const T& in, const T& mask, std::vector<cv::KeyPoint>& pts, T& descriptors, bool useProvided = false)
-    {
-        surf->detectAndCompute(in, mask, pts, descriptors, useProvided);
-    }
-};
 
-template<class KPMatcher>
-struct SURFMatcher
-{
-    KPMatcher matcher;
-    template<class T>
-    void match(const T& in1, const T& in2, std::vector<cv::DMatch>& matches)
-    {
-        matcher.match(in1, in2, matches);
-    }
-};
+    //-- Draw only "good" matches (i.e. whose distance is less than 2*min_dist,
+    //-- or a small arbitary value ( 0.02 ) in the event that min_dist is very
+    //-- small)
+    //-- PS.- radiusMatch can also be used here.
 
-static Mat drawGoodMatches(
-        const Mat& img1,
-        const Mat& img2,
-        const std::vector<KeyPoint>& keypoints1,
-        const std::vector<KeyPoint>& keypoints2,
-        std::vector<DMatch>& matches,
-        std::vector<Point2f>& scene_corners_
-)
-{
-    //-- Sort matches and preserve top 10% matches
-    std::sort(matches.begin(), matches.end());
-    std::vector< DMatch > good_matches;
-    double minDist = matches.front().distance;
-    double maxDist = matches.back().distance;
-
-    const int ptsPairs = std::min(GOOD_PTS_MAX, (int)(matches.size() * GOOD_PORTION));
-    for( int i = 0; i < ptsPairs; i++ )
-    {
-        good_matches.push_back( matches[i] );
-    }
-    std::cout << "\nMax distance: " << maxDist << std::endl;
-    std::cout << "Min distance: " << minDist << std::endl;
-
-    std::cout << "Calculating homography using " << ptsPairs << " point pairs." << std::endl;
-
-    // drawing the results
+    //-- Draw only "good" matches
     Mat img_matches;
-
-    drawMatches( img1, keypoints1, img2, keypoints2,
-                 good_matches, img_matches, Scalar::all(-1), Scalar::all(-1),
-                 std::vector<char>(), DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS  );
-
-    //-- Localize the object
-    std::vector<Point2f> obj;
-    std::vector<Point2f> scene;
-
-    for( size_t i = 0; i < good_matches.size(); i++ )
-    {
-        //-- Get the keypoints from the good matches
-        obj.push_back( keypoints1[ good_matches[i].queryIdx ].pt );
-        scene.push_back( keypoints2[ good_matches[i].trainIdx ].pt );
-    }
-//    //-- Get the corners from the image_1 ( the object to be "detected" )
-//    std::vector<Point2f> obj_corners(4);
-//    obj_corners[0] = Point(0,0);
-//    obj_corners[1] = Point( img1.cols, 0 );
-//    obj_corners[2] = Point( img1.cols, img1.rows );
-//    obj_corners[3] = Point( 0, img1.rows );
-//    std::vector<Point2f> scene_corners(4);
-//
-//    Mat H = findHomography( obj, scene, RANSAC );
-//    perspectiveTransform( obj_corners, scene_corners, H);
-//
-//    scene_corners_ = scene_corners;
-//
-//    //-- Draw lines between the corners (the mapped object in the scene - image_2 )
-//    line( img_matches,
-//          scene_corners[0] + Point2f( (float)img1.cols, 0), scene_corners[1] + Point2f( (float)img1.cols, 0),
-//          Scalar( 0, 255, 0), 2, LINE_AA );
-//    line( img_matches,
-//          scene_corners[1] + Point2f( (float)img1.cols, 0), scene_corners[2] + Point2f( (float)img1.cols, 0),
-//          Scalar( 0, 255, 0), 2, LINE_AA );
-//    line( img_matches,
-//          scene_corners[2] + Point2f( (float)img1.cols, 0), scene_corners[3] + Point2f( (float)img1.cols, 0),
-//          Scalar( 0, 255, 0), 2, LINE_AA );
-//    line( img_matches,
-//          scene_corners[3] + Point2f( (float)img1.cols, 0), scene_corners[0] + Point2f( (float)img1.cols, 0),
-//          Scalar( 0, 255, 0), 2, LINE_AA );
-    return img_matches;
+    drawMatches( img_1, keypoints_1, img_2, keypoints_2,
+                 goodmatches, img_matches, Scalar::all(-1), Scalar::all(-1),
+                 vector<char>(), DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS );
+    //-- Show detected matches
+    imshow( "Good Matches", img_matches );
+    for( int i = 0; i < (int)goodmatches.size(); i++ )
+    { printf( "-- Good Match [%d] Keypoint 1: %d  -- Keypoint 2: %d  \n", i, goodmatches[i].queryIdx, goodmatches[i].trainIdx ); }
+    waitKey(0);
+    return 0;
 }
-
-////////////////////////////////////////////////////
-// This program demonstrates the usage of SURF_OCL.
-// use cpu findHomography interface to calculate the transformation matrix
-int main(int argc, char* argv[])
-{
-   bool first_run=true;
-    const char* keys =
-            "{ h help     |                  | print help message  }"
-                    "{ l left     | box.png          | specify left image  }"
-                    "{ r right    | box_in_scene.png | specify right image }"
-                    "{ o output   | SURF_output.jpg  | specify output save path }"
-                    "{ m cpu_mode |                  | run without OpenCL }";
-
-    CommandLineParser cmd(argc, argv, keys);
-    if (cmd.has("help"))
-    {
-        std::cout << "Usage: surf_matcher [options]" << std::endl;
-        std::cout << "Available options:" << std::endl;
-        cmd.printMessage();
-        return EXIT_SUCCESS;
-    }
-    if (cmd.has("cpu_mode"))
-    {
-        ocl::setUseOpenCL(false);
-        std::cout << "OpenCL was disabled" << std::endl;
-    }
-
-  VideoCapture cap(0);
-    UMat temp;
-    UMat img1, img2;
-
-//    std::string outpath = cmd.get<std::string>("o");
-//
-//    std::string leftName = cmd.get<std::string>("l");
-//
-
-    cap.read(img1);
-    if(img1.empty())
-    {
-        std::cout << "Couldn't load image 1" << std::endl;
-        cmd.printMessage();
-        return EXIT_FAILURE;
-    }
-
-    Rect2d r = selectROI(img1);
-    img2=img1(r);
-    temp=img2.clone();
-    if(img2.empty())
-    {
-        std::cout << "Couldn't load image 2" << std::endl;
-        cmd.printMessage();
-        return EXIT_FAILURE;
-    }
-
-    double surf_time = 0.;
-
-    //declare input/output
-    std::vector<KeyPoint> keypoints1, keypoints2;
-    std::vector<DMatch> matches;
-
-    UMat _descriptors1, _descriptors2;
-    Mat descriptors1 = _descriptors1.getMat(ACCESS_RW),
-            descriptors2 = _descriptors2.getMat(ACCESS_RW);
-
-    //instantiate detectors/matchers
-    SURFDetector surf;
-
-    SURFMatcher<BFMatcher> matcher;
-
-    //-- start of timing section
-
-
- while(1) {
-
-     if(!first_run)
-         cap.read(img1);
-
-     if(first_run)
-         first_run=false;
-
-
-     for (int i = 0; i <= LOOP_NUM; i++) {
-         if (i == 1) workBegin();
-         surf(img1.getMat(ACCESS_READ), Mat(), keypoints1, descriptors1);
-         surf( temp.getMat(ACCESS_READ), Mat(), keypoints2, descriptors2);
-         matcher.match(descriptors1, descriptors2, matches);
-     }
-     workEnd();
-     std::cout << "FOUND " << keypoints1.size() << " keypoints on first image" << std::endl;
-     std::cout << "FOUND " << keypoints2.size() << " keypoints on second image" << std::endl;
-
-     surf_time = getTime();
-     std::cout << "SURF run time: " << surf_time / LOOP_NUM << " ms" << std::endl << "\n";
-
-
-     std::vector<Point2f> corner;
-     Mat img_matches = drawGoodMatches(img1.getMat(ACCESS_READ),  temp.getMat(ACCESS_READ), keypoints1, keypoints2,
-                                       matches, corner);
-
-     //-- Show detected matches
-
-     namedWindow("surf matches", 0);
-     imshow("surf matches", img_matches);
-//    imwrite(outpath, img_matches);
-
-     waitKey(10);
-
- }
-    return EXIT_SUCCESS;
-}
+/*
+ * @function readme
+ */
+void readme()
+{ std::cout << " Usage: ./SURF_FlannMatcher <img1> <img2>" << std::endl; }
