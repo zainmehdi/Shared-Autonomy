@@ -57,7 +57,7 @@ int line_point_size;
 int n=0;
 double th_prev =0;
 Mat gray, prevGray, image, frame;
-vector<Point2f> points[2];
+vector<Point2f>points[2];
 Point2f point;
 Point2f point1;
 Point2f desired_point;
@@ -88,14 +88,22 @@ geometry_msgs::Twist v;
 
 void onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ )
 {
+
     if( event == EVENT_LBUTTONDOWN && !drag )
     {
-        point = Point2f((float)x, (float)y);
-        addRemovePt = true;
         drag=true;
     }
 
-    else if( event == EVENT_MOUSEMOVE && drag )
+  if( event == EVENT_LBUTTONDOWN && path_drawn )
+    {
+        point = Point2f((float)x, (float)y);
+        addRemovePt = true;
+        cout<<"Point added \n";
+    }
+
+
+
+    else if( event == EVENT_MOUSEMOVE && !path_drawn && drag)
     {
 
         line_points.push_back(CvPoint(x,y));
@@ -113,7 +121,7 @@ Mat transformation_calculate(Point2f x, Point2f y)
 {
     double Tx=y.x-x.x;
     double Ty=y.y-x.y;
-    double theta=atan((y.y-x.y)/(y.x-x.x));
+    double theta=atan(Ty/Tx);
 
     Mat T=Mat_<double>(3,3);
     T.at<double>(0,0)=cos(theta*3.1428/180);
@@ -131,7 +139,7 @@ Mat transformation_calculate(Point2f x, Point2f y)
 
 double distance(Point a,Point b)
 {
-    return sqrt(pow(b.x-a.x,2)+(b.y-a.y,2));
+    return sqrt(pow(b.x-a.x,2)+pow(b.y-a.y,2));
 }
 
 double derivative(Point a, Point b)
@@ -236,43 +244,25 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
                 cornerSubPix(gray, points[1], subPixWinSize, Size(-1, -1), termcrit);
                 addRemovePt = false;
                 features_found=true;
-            } else if (!points[0].empty()) {
-                vector<uchar> status;
-                vector<float> err;
-                if (prevGray.empty())
-                    gray.copyTo(prevGray);
-                calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
-                                     3, termcrit, 0, 0.001);
-                size_t i, k;
-
-                {
-                    if (addRemovePt) {
-                        if (norm(point - points[1][0]) <= 5) {
-                            addRemovePt = false;
-                            return;
-                        }
-                    }
-
-
-                    circle(image, points[1].back(), 3, Scalar(0, 200, 0), -1, 8);
-
-                }
-
-
-
-
             }
+
 
             if (addRemovePt && points[1].size() < (size_t) MAX_COUNT) {
                 vector<Point2f> tmp;
                 tmp.push_back(point);
                 cornerSubPix(gray, tmp, winSize, Size(-1, -1), termcrit);
                 points[1].push_back(tmp[0]);
+
                 addRemovePt = false;
                 features_found=true;
             }
 
 
+//        if(features_found)
+//            circle(image,points[1].back() , 3, Scalar(0, 255, 0), -1, 8);
+
+
+            cout<<"SIze: "<<points[1].size()<<"\n";
             for(auto index:line_points)
             {
 
@@ -306,6 +296,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
 
             std::swap(points[1], points[0]);
             cv::swap(prevGray, gray);
+
+
 
         }
 
@@ -356,13 +348,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
             image = Scalar::all(0);
 
 
-            if (needToInit) {
-                // automatic initialization
-//                goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, Mat(), 3, 3, 0, 0.04);
-//                cornerSubPix(gray, points[1], subPixWinSize, Size(-1, -1), termcrit);
-                addRemovePt = false;
-                features_found=true;
-            } else if (!points[0].empty()) {
+        if (!points[0].empty()) {
                 vector<uchar> status;
                 vector<float> err;
                 if (prevGray.empty())
@@ -370,14 +356,6 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
                 calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
                                      3, termcrit, 0, 0.001);
 
-
-
-                if (addRemovePt) {
-                    if (norm(point - points[1][0]) <= 5) {
-                        addRemovePt = false;
-                        return;
-                    }
-                }
 
 
                 circle(image, points[1][0], 3, Scalar(0, 255, 0), -1, 8);
@@ -390,8 +368,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
                 temp_feature.create(3,1,cv::DataType<double>::type) ;
                 line.create(3,1,cv::DataType<double>::type) ;
 
-                temp.at<double>(0,0)=points[1].back().x;
-                temp.at<double>(1,0)=points[1].back().y;
+                temp.at<double>(0,0)=points[1][0].x;
+                temp.at<double>(1,0)=points[1][0].y;
                 temp.at<double>(2,0)=1;
 
 
@@ -400,7 +378,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
 
                 temp_feature=transformation_bw_goal_nf.inv(DECOMP_LU)*temp;
 
-                for(int i=0;i<transformation_bw_line.size();i++)
+                for(int i=line_points.size()-1;i>=0;i--)
                 {
                     line=transformation_bw_line[i]*temp_feature;
                     line_points[i].x=line.at<double>(0,0);
@@ -452,8 +430,8 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg) {
             ////////////////////////////////////////////////////////////////////////////////
 
 
-        v.linear.y = (-line_points[n].x + desired_point.x) / 800;
-        v.linear.x = (-line_points[n].y + desired_point.y) / 1000;
+        v.linear.y = (desired_point.x-line_points[n].x) / 800;
+        v.linear.x = (desired_point.y-line_points[n].y) / 1000;
         v.angular.z= (atan2(v.linear.y*800,v.linear.x*1000));
 
 //        v.angular.z=1;
