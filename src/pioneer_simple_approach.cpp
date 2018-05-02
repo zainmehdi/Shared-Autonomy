@@ -15,18 +15,27 @@
 
 #include <iostream>
 #include <ctype.h>
-#include "ros/ros.h"
+#include <ros/ros.h>
 #include "image_transport/image_transport.h"
 #include "geometry_msgs/Twist.h"
 #include "cv_bridge/cv_bridge.h"
 #include "opencv2/xfeatures2d/nonfree.hpp"
 #include "opencv2/features2d.hpp"
-
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <image_transport/subscriber_filter.h>
+#include <tf/transform_broadcaster.h>
+#include <tf/LinearMath/Quaternion.h>
+#include <tf/LinearMath/Matrix3x3.h>
+#include<angles/angles.h>
 
 using namespace cv;
 using namespace std;
 namespace enc = sensor_msgs::image_encodings;
 using namespace cv::xfeatures2d;
+using namespace message_filters;
+
 
 TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
 Size subPixWinSize(10,10), winSize(30,30);
@@ -49,6 +58,7 @@ vector<Point2f> points[2];
 vector<Point2f> point_buffer;
 int m=0;
 Point2f point;
+Point2f point_of_discontinuity;
 Point2f point1;
 Point2f desired_point;
 Point2f previous,current;
@@ -77,6 +87,8 @@ Point p;
 vector<Point2f> pp;
 int e=0;
 bool drag;
+bool discontinuity=false;
+
 
 double camera_height=40;
 double camera_pitch = 45;
@@ -84,8 +96,13 @@ Ptr<FeatureDetector> Surf;
 Ptr<SURF> Surf_detector;
 std::vector<KeyPoint> keypoints[2];
 std::vector<Mat> surf_descriptor[2];
+double roll,pitch,yaw;
 
-
+float left_sum,right_sum,up_sum,down_sum;
+vector<uchar> status;
+geometry_msgs::Twist velocity;
+geometry_msgs::PoseStamped pose_from_unity;
+bool obstacle=false;
 
 /// Function that selects points to be drawn on image as path. It takes as input
 /// all points that user draws using mouse and then selects certain number of points
@@ -115,12 +132,9 @@ void points_selector(vector<Point> &all_points){
         }
 
         int distance=sqrt(pow(p.x-i.x,2)+pow(p.y-i.y,2));
-//        if(distance>(2*circle_radius*25))
         if(distance>5)
         {
-
             selected_points.push_back(i);
-            cout<<"Point pushed \n";
             p=i;
         }
 
@@ -190,7 +204,7 @@ double distance(Point a,Point b)
     return sqrt(pow(b.x-a.x,2)+(b.y-a.y,2));
 }
 
-/// Function for calculatinf derivative
+/// Function for calculating derivative
 
 double derivative(Point a, Point b)
 {
@@ -206,6 +220,7 @@ void find_features(Mat colr ,Mat gr)
     cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
     for (auto it:selected_points) {
+
 
 
         // The mask that we created using rectangles is used to created a ROI and features are extracted in that ROI.
@@ -268,135 +283,364 @@ void acquire_image(const sensor_msgs::ImageConstPtr& img)
     frame=cv_ptr->image;
 }
 
-/// This is the visual servoing loop that calculates optical flow and performs the task of following the path.
 
-void visual_servo()
+
+
+
+void Draw_flowVectors(vector<Point2f> prev_pts, vector<Point2f> next_pts)
 {
 
+    right_sum=0;
+    left_sum=0;
+    up_sum=0;
+    down_sum=0;
 
-    if( frame.empty() )
-        return;
-
-    frame.copyTo(image);
-    cvtColor(image, gray, COLOR_BGR2GRAY);
-
-    if (nightMode)
-        image = Scalar::all(0);
-
-    if (needToInit) {
-
-      find_features(frame,gray);
-    }
-
-
-    else if (!points[0].empty()) {
-
-        vector<uchar> status;
-        vector<float> err;
-        if (prevGray.empty())
-            gray.copyTo(prevGray);
-        calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
-                             3, termcrit, 0, 0.001);
-
-
-        size_t i, k;
-        for( i = k = 0; i < points[1].size(); i++ )
-        {
-
-            points[1][k++] = points[1][i];
-            circle( image, points[1][i], 3, Scalar(0,255,0), -1, 8);
-        }
-        points[1].resize(k);
-
-
-
-    }
-    needToInit = false;
-
-    std::swap(points[1], points[0]);
-    cv::swap(prevGray, gray);
-
-
-
-    circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
-
-    v.linear.y = (-points[0][n].x + desired_point.x) / 1800;
-    v.linear.x = (-points[0][n].y + desired_point.y) / 1200;
-//  v.linear.z = (-points[0][n].y + desired_point.y) / 2000;
-    v.angular.z= (atan2(v.linear.y,v.linear.x));
-    vel_pub.publish(v);
-
-
-    circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
-
-    imshow("LK Demo", image);
-
-    //   robot.setVelocity(vpRobot::REFERENCE_FRAME, v);
-
-//        cout << "n: " << n << endl;
-    first_run = false;
-
-
-
-    if(distance(desired_point,points[0][n]) < 1)
+    for(int i=0;i<next_pts.size();i++)
     {
+        CvPoint p,q;
 
-        n++;
-        if(n==points[0].size())
-            waitKey();
+        if(!status[i])
+            continue;
+
+        p.x = (int) prev_pts[i].x;
+        p.y = (int) prev_pts[i].y;
+        q.x = (int) next_pts[i].x;
+        q.y = (int) next_pts[i].y;
+        double angle;
+        angle = atan2( (double) p.y - q.y, (double) p.x - q.x );
+        double hypotenuse;  hypotenuse = sqrt( pow(p.y - q.y,2) + pow(p.x - q.x,2 ));
+        q.x = (int) (p.x - 3 * hypotenuse * cos(angle));
+        q.y = (int) (p.y - 3 * hypotenuse * sin(angle));
+        arrowedLine( image, p, q, Scalar(255,255,255), 1, CV_AA, 0 );
+
+
+
+
+        int mag= sqrt(pow(next_pts[i].x-prev_pts[i].x,2)+pow(next_pts[i].y-prev_pts[i].y,2));
+
+        if(next_pts[i].x > 320)
+            right_sum+=mag;
+        else
+            left_sum+=mag;
+
+        if(next_pts[i].y <329)
+            up_sum+=mag;
+        else
+            down_sum+=mag;
+
 
 
     }
 
+    cout<<"Left Flow "<<left_sum<<" Right Flow "<<right_sum
+        <<" Up Flow "<<up_sum<<" Down Flow "<<down_sum<<endl;
+    cout<<".........................................."<<endl;
+
+
+}
 
 
 
 
-    char c = (char) waitKey(20);
-    if (c == 27)
-        return;
-    switch (c) {
+/// This is the visual servoing loop that calculates optical flow and performs the task of following the path.
+
+void visual_servo() {
 
 
+    if (!obstacle) {
 
-        case 's':
-        {
-            imwrite("/home/kari/surf_test1.jpg",gray);
-            imwrite("/home/kari/surf_test_mask.jpg",mask);
-            cout<<"Image 1 saved \n";
-            break;
+
+        if (frame.empty())
+            return;
+
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
+
+        if (nightMode)
+            image = Scalar::all(0);
+
+        if (needToInit) {
+
+            find_features(frame, gray);
+        } else if (!points[0].empty()) {
+
+            vector<uchar> status;
+            vector<float> err;
+            if (prevGray.empty())
+                gray.copyTo(prevGray);
+            calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
+                                 3, termcrit, 0, 0.001);
+
+
+            size_t i, k;
+            for (i = k = 0; i < points[1].size(); i++) {
+
+                points[1][k++] = points[1][i];
+                circle(image, points[1][i], 3, Scalar(0, 255, 0), -1, 8);
+            }
+            points[1].resize(k);
+
 
         }
+        needToInit = false;
 
-        case 'd':
-        {
-            imwrite("/home/surf_test2.jpg",gray);
-            cout<<"Image 2 saved \n";
-            break;
+        std::swap(points[1], points[0]);
+        cv::swap(prevGray, gray);
 
-        }
 
-        case 'r':
-            needToInit = true;
-            pp.clear();
-            e = 0;
-            cout << "Re Initialized \n";
-            break;
+        //Checkinf Discontinuity in Points
+//
+//   if(distance(points[0][n+1],points[0][n])>50)
 
-        case 'c':
+
+        // Now I am activating obstacle routing when only three points are left in points buffer
+        // its better to add a trigger than can be manually controlled ny user to toggle it on oe off
+
+        if (n == points[0].size() - 3) {
+
+            obstacle=true;
+            needToInit=true;
             points[0].clear();
             points[1].clear();
-            line_points.clear();
-            line_points_circle.clear();
-            n=0;
-            features_found = false;
-            cout << "Points Cleared \n";
-            path_drawn= false;
-            feature_on_path_found=false;
-            break;
-        case 'n':
+
+        } else
+            obstacle=false;
+
+
+//    {
+////        points[0][n].x-=10;
+//        cout<<"Discontinuity\n";
+//
+//        v.linear.x=0;
+//        v.linear.y=0;
+//        v.angular.y=0;
+//        vel_pub.publish(v);
+//
+//         while(1)
+//         {
+//             char c = (char) waitKey(20);
+//
+//             if (c == 27)
+//                 break;
+//
+//             vel_pub.publish(v);
+//         }
+//
+//    }
+
+
+
+
+        float desired_angle;
+        float current_angle;
+
+        circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
+
+
+        v.linear.y = (-points[0][n].x + desired_point.x) /100;       // X direction for unity
+        v.linear.x = (-points[0][n].y + desired_point.y) /80;    // Z direction for unity
+
+        current_angle=atan2(points[0][n].y,points[0][n].x);
+        desired_angle=atan2(points[0][n].y,desired_point.x);
+
+        cout<<"Desired_angle: "<<desired_angle-current_angle<<endl;
+
+        v.angular.z=-(desired_angle-current_angle)*50;
+
+        vel_pub.publish(v);
+
+
+        //  cout<<"v"<<v<<endl;
+
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+        imshow("LK Demo", image);
+
+        //   robot.setVelocity(vpRobot::REFERENCE_FRAME, v);
+
+//        cout << "n: " << n << endl;
+        first_run = false;
+
+
+        if (distance(desired_point, points[0][n]) < 1) {
+
             n++;
+            if (n == points[0].size())
+                waitKey();
+
+
+        }
+
+
+        char c = (char) waitKey(20);
+        if (c == 27)
+            return;
+        switch (c) {
+
+
+            case 's': {
+                imwrite("/home/kari/surf_test1.jpg", gray);
+                imwrite("/home/kari/surf_test_mask.jpg", mask);
+                cout << "Image 1 saved \n";
+                break;
+
+            }
+
+            case 'd': {
+                imwrite("/home/surf_test2.jpg", gray);
+                cout << "Image 2 saved \n";
+                break;
+
+            }
+
+            case 'r':
+                needToInit = true;
+                pp.clear();
+                e = 0;
+                cout << "Re Initialized \n";
+                break;
+
+            case 'c':
+                points[0].clear();
+                points[1].clear();
+                line_points.clear();
+                line_points_circle.clear();
+                n = 0;
+                features_found = false;
+                cout << "Points Cleared \n";
+                path_drawn = false;
+                feature_on_path_found = false;
+                discontinuity = false;
+                first_run = true;
+                break;
+            case 'n':
+                n++;
+        }
     }
+
+    if(obstacle){
+
+
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
+
+        Rect ROI=Rect(200,1,250,300);
+        Mat mask;
+        Mat mask_image;
+        mask = Mat::zeros(gray.size(), CV_8U);
+        mask_image=Mat(mask,ROI);
+        mask_image=Scalar(255,255,255);
+        if( nightMode )
+            image = Scalar::all(0);
+
+        if( needToInit )
+        {
+            // automatic initialization
+            goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
+            cornerSubPix(gray, points[1], subPixWinSize, Size(-1,-1), termcrit);
+            addRemovePt = false;
+        }
+        else if( !points[0].empty() )
+        {
+
+            vector<float> err;
+            if(prevGray.empty())
+                gray.copyTo(prevGray);
+            calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
+                                 3, termcrit, 0, 0.001);
+
+
+            if(!points[0].empty() && !points[1].empty())
+            {
+                Draw_flowVectors(points[0],points[1]);
+                // calculate_FOE(points[0],points[1]);
+            }
+
+            size_t i, k;
+            for( i = k = 0; i < points[1].size(); i++ )
+            {
+                if( addRemovePt )
+                {
+                    if( norm(point - points[1][i]) <= 10 )
+                    {
+                        addRemovePt = false;
+                        continue;
+                    }
+                }
+
+                if( !status[i] )
+                    continue;
+
+                points[1][k++] = points[1][i];
+                circle( image, points[1][i], 3, Scalar(0,255,0), -1, 8);
+            }
+            points[1].resize(k);
+        }
+
+        if( addRemovePt && points[1].size() < (size_t)MAX_COUNT )
+        {
+            vector<Point2f> tmp;
+            tmp.push_back(point);
+            cornerSubPix( gray, tmp, winSize, Size(-1,-1), termcrit);
+            points[1].push_back(tmp[0]);
+            addRemovePt = false;
+        }
+
+        needToInit = false;
+        imshow("LK Demo", image);
+
+        char c = (char)waitKey(10);
+        if( c == 27 )
+            return;
+        switch( c )
+        {
+            case 'r':
+                needToInit = true;
+                break;
+            case 'c':
+                points[0].clear();
+                points[1].clear();
+                obstacle=false;
+                break;
+            case 'n':
+                nightMode = !nightMode;
+                break;
+        }
+
+
+
+        std::swap(points[1], points[0]);
+        cv::swap(prevGray, gray);
+
+        velocity.linear.x=0.01;
+
+        if(right_sum>left_sum && (abs(right_sum-left_sum)>50))
+        {
+
+          //  velocity.linear.x=0.01;
+            velocity.angular.z=25;
+            vel_pub.publish(velocity);
+        }
+
+        else if(left_sum>right_sum && (abs(right_sum-left_sum)>50))
+        {
+
+
+           // velocity.linear.x=0.01;
+            velocity.angular.z=-25;
+            vel_pub.publish(velocity);
+        }
+
+        else
+        {
+            velocity.linear.y=0;
+            velocity.angular.z=0;
+            vel_pub.publish(velocity);
+        }
+
+    }
+
+
 
 }
 
@@ -418,7 +662,7 @@ void path_drawn_features_nishta()
         image = Scalar::all(0);
 
 
-    // needtoinit variable decided if user wants to reinitialize the features. In the first run it will always be true
+    // needtoinit variable decides if user wants to reinitialize the features. In the first run it will always be true
 
     if (needToInit) {
 
@@ -443,7 +687,7 @@ void path_drawn_features_nishta()
     circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
 
 
-   // Drawing indicator circle that shows which point is being followed. Variable n decides that and is updated in button press bu user
+   // Drawing indicator circle that shows which point is being followed. Variable n decides that and is updated in button press by the user
     if (!points[1].empty())
         circle(image, points[1][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
 
@@ -487,6 +731,10 @@ void path_drawn_features_nishta()
             path_drawn= false;
             n=0;
             feature_on_path_found=false;
+            discontinuity=false;
+            first_run=true;
+
+
             break;
         case 'n':
             //  nightMode = !nightMode;
@@ -541,20 +789,24 @@ void path_not_yet_drawn()
             points[1].clear();
             selected_points.clear();
             path_drawn= false;
+            discontinuity=false;
+            first_run=true;
+
+
             break;
     }
 
 
-    // This is the desired point of reference point that shows position of the robot in image
+    // This is the desired point or reference point that shows position of the robot in image
     // and tries to follow the points we draw on screen
 
     circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
     imshow("LK Demo", image);
 
     // Making sure that the velocity sent to robot is zero. It may look useless here but when we are in
-    // later cycles if execution and clear points and come bacj to this thread then v variable will have
+    // later cycles of execution and clear points and come back to this thread then v variable will have
     // velocity value of that thread (non zero) and will be continuously sent to the robot which is not
-    // what we want as during this stage of execution robot should be stationary so we are inforcing our
+    // what we want as during this stage of execution robot should be stationary so we are enforcing our
     // static robot state here.
 
     v.linear.y = 0;
@@ -567,19 +819,32 @@ void path_not_yet_drawn()
 
 /// Callback function for incoming images
 
-void imageCb(const sensor_msgs::ImageConstPtr& msg)
+void imageCb(const sensor_msgs::ImageConstPtr& msg1, const geometry_msgs::PoseStampedConstPtr &msg2)
 {
 
 
 
-    acquire_image(msg);
+    acquire_image(msg1);
+
+   // This part is not needed. I am operating in two different coordinate frames
+    // Unity and opencv / image coordinates. The angle feedback is from unity
+    // while angle calculation is in image coordiantes. They cannot be used to calculate
+    // error term/
+
+    tf::Quaternion quater;
+    tf::quaternionMsgToTF(msg2->pose.orientation,quater);
+    tf::Matrix3x3(quater).getRPY(roll,pitch,yaw);
+    pitch=angles::to_degrees(pitch);
+
+ //   cout<<" Yaw from Unity test :";
+ //   printf("%.3f \n",pitch);
 
 
     if (!path_drawn) {
 
-        cout << "\n ****************************************\n"
-             << "\nDrawing path on the image\n"
-             << "\n*****************************************\n";
+//        cout << "\n ****************************************\n"
+//             << "\nDrawing path on the image\n"
+//             << "\n*****************************************\n";
 
         path_not_yet_drawn();
 
@@ -589,10 +854,10 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
     if (path_drawn  && !feature_on_path_found ) {
 
-
-        cout << "\n ****************************************\n"
-             << "\nFinding Features on Drawn Path\n"
-             << "\n*****************************************\n";
+//
+//        cout << "\n ****************************************\n"
+//             << "\nFinding Features on Drawn Path\n"
+//             << "\n*****************************************\n";
 
         path_drawn_features_nishta();
     }
@@ -604,15 +869,27 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 
 
 
-           cout << "\n**********************************\n"
-                << "\n Visual Servoing Loop has started\n"
-                << "\n**********************************\n";
+//           cout << "\n**********************************\n"
+//                << "\n Visual Servoing Loop has started\n"
+//                << "\n**********************************\n";
 
 
             visual_servo();
 
     }
+
+    if(discontinuity)
+       cout<<"Path is discontinuous. You have an obstacle in between \n";
 }
+
+
+
+
+
+
+
+
+
 
 
 
@@ -624,10 +901,14 @@ int main(int argc, char **argv) {
     desired_point = Point(320, 475);
     image_transport::ImageTransport it(nh);
 
+
     Surf_detector=SURF::create(400);
-    image_transport::Subscriber image_sub;
+    image_transport::SubscriberFilter image_sub(it,"image_raw",1);
+    message_filters::Subscriber<geometry_msgs::PoseStamped> pose_sub(nh,"pose",1);
+    TimeSynchronizer<sensor_msgs::Image,geometry_msgs::PoseStamped> sync(image_sub,pose_sub,10);
+    sync.registerCallback(boost::bind(&imageCb,_1,_2));
     vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
-    image_sub = it.subscribe("image_raw", 1,imageCb);
+ //   image_sub = it.subscribe("image_raw", 1,imageCb);
     namedWindow( "LK Demo", 1 );
     setMouseCallback( "LK Demo", onMouse, 0 );
     ros::spin();

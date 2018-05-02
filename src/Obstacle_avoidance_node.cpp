@@ -3,6 +3,18 @@
 //
 
 
+/*
+ *
+ * This node runs in parellel to main node and helps in
+ * avoiding obstacles. Used optical flow balancing strategy to figure out which way to go.
+ * Can also be used as a stand alone node to avoid obstacle for a real or simulated robot.
+ * For simulated robot however some changes need to be made in  the part where velocities
+ * are sent.
+ *
+ * http://journals.sagepub.com/doi/pdf/10.5772/5715
+ *
+*/
+
 #include "opencv2/video/tracking.hpp"
 #include "opencv2/imgproc.hpp"
 #include "opencv2/videoio.hpp"
@@ -28,24 +40,13 @@
 #include <iostream>
 #include <ctype.h>
 
+
 using namespace cv;
 using namespace std;
 using namespace Eigen;
 namespace enc = sensor_msgs::image_encodings;
 
-static void help()
-{
-    // print a welcome message, and the OpenCV version
-    cout << "\nThis is a demo of Lukas-Kanade optical flow lkdemo(),\n"
-            "Using OpenCV version " << CV_VERSION << endl;
-    cout << "\nIt uses camera by default, but you can provide a path to video as an argument.\n";
-    cout << "\nHot keys: \n"
-            "\tESC - quit the program\n"
-            "\tr - auto-initialize tracking\n"
-            "\tc - delete all the points\n"
-            "\tn - switch the \"night\" mode on/off\n"
-            "To add/remove a feature point click it\n" << endl;
-}
+
 
 Point2f point;
 bool addRemovePt = false;
@@ -73,6 +74,11 @@ static void onMouse( int event, int x, int y, int /*flags*/, void* /*param*/ )
     }
 }
 
+
+// Function to calculate Focus of Expansion.
+// Helpful resources
+// https://www.dgp.toronto.edu/~donovan/stabilization/opticalflow.pdf
+// https://stackoverflow.com/questions/18245076/optical-flow-and-focus-of-expansion-in-opencv?rq=1
 
 void calculate_FOE(vector<Point2f> prev_pts, vector<Point2f> next_pts)
 {
@@ -104,6 +110,8 @@ void calculate_FOE(vector<Point2f> prev_pts, vector<Point2f> next_pts)
 
 }
 
+// Function to draw flow vector and calculate magnitude
+
 void Draw_flowVectors(vector<Point2f> prev_pts, vector<Point2f> next_pts)
 {
 
@@ -114,11 +122,7 @@ void Draw_flowVectors(vector<Point2f> prev_pts, vector<Point2f> next_pts)
 
     for(int i=0;i<next_pts.size();i++)
     {
-        CvPoint p,q; /*  "p" is the point where the line begins.
-/*  "q" is the point where the line stops.
-/*  "CV_AA" means antialiased drawing.
-/*  "0" means no fractional bits in the center cooridinate or radius.
-*/
+        CvPoint p,q;
 
         if(!status[i])
             continue;
@@ -130,14 +134,20 @@ void Draw_flowVectors(vector<Point2f> prev_pts, vector<Point2f> next_pts)
         double angle;
         angle = atan2( (double) p.y - q.y, (double) p.x - q.x );
         double hypotenuse;  hypotenuse = sqrt( pow(p.y - q.y,2) + pow(p.x - q.x,2 ));
+
+        // Scaling of arrow vectors
         q.x = (int) (p.x - 3 * hypotenuse * cos(angle));
         q.y = (int) (p.y - 3 * hypotenuse * sin(angle));
         arrowedLine( image, p, q, Scalar(255,255,255), 1, CV_AA, 0 );
 
 
 
+        // Calculating magnitude
 
         int mag= sqrt(pow(next_pts[i].x-prev_pts[i].x,2)+pow(next_pts[i].y-prev_pts[i].y,2));
+
+       // Flow vectors are categorized according to there position in image
+       // We can choose horizontal and vertical boundary as per our choice
 
         if(next_pts[i].x > 320)
             right_sum+=mag;
@@ -187,7 +197,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
     frame.copyTo(image);
     cvtColor(image, gray, COLOR_BGR2GRAY);
 
-    Rect ROI=Rect(200,1,220,439);
+    Rect ROI=Rect(200,1,250,300);
     Mat mask;
     Mat mask_image;
     mask = Mat::zeros(gray.size(), CV_8U);
@@ -216,7 +226,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
         if(!points[0].empty() && !points[1].empty())
         {
             Draw_flowVectors(points[0],points[1]);
-            // calculate_FOE(points[0],points[1]);
+            // calculate_FOE(points[0],points[1]);       // wasnt working properly so omitted it
         }
 
         size_t i, k;
@@ -250,7 +260,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
     }
 
     needToInit = false;
-    imshow("LK Demo", image);
+    imshow("Obstacle_Avoidance", image);
 
     char c = (char)waitKey(10);
     if( c == 27 )
@@ -275,26 +285,35 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
     cv::swap(prevGray, gray);
 
 
-    if(right_sum>left_sum && (abs(right_sum-left_sum)>15))
+    // Here we decide when and in which direction to avoid obstacle
+    // I use a specific magnitude threshold which when exceeded
+    // triggers velocity commands to be published to Unity or actual robot
+
+    if(right_sum>left_sum && (abs(right_sum-left_sum)>50))
     {
-        velocity.angular.z=25;
+
+        velocity.angular.z=-10;
+        vel_pub.publish(velocity);
     }
 
-    else if(left_sum>right_sum && (abs(right_sum-left_sum)>15))
+    else if(left_sum>right_sum && (abs(right_sum-left_sum)>50))
     {
 
 
-        velocity.angular.z=-25;
+
+        velocity.angular.z=10;
+        vel_pub.publish(velocity);
     }
 
     else
     {
+        velocity.linear.y=0;
         velocity.angular.z=0;
     }
 
 
 
-    vel_pub.publish(velocity);
+
 
 
 
@@ -305,15 +324,14 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg)
 //
 int main( int argc, char** argv ) {
 
-    ros::init(argc, argv, "LKDEMO");
+    ros::init(argc, argv, "Obstacle_Avoidance");
     ros::NodeHandle nh;
     image_transport::ImageTransport it(nh);
     image_transport::Subscriber image_sub;
     image_transport::Publisher image_pub;
     image_sub = it.subscribe("image_raw", 1, imageCb);
     vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
-    //   namedWindow( "LK Demo", 1 );
-    //   setMouseCallback( "LK Demo", onMouse, 0 );
+
     ros::spin();
 
     return 0;
