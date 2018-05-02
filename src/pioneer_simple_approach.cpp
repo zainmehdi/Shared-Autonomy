@@ -443,7 +443,7 @@ void visual_servo() {
         current_angle=atan2(points[0][n].y,points[0][n].x);
         desired_angle=atan2(points[0][n].y,desired_point.x);
 
-        cout<<"Desired_angle: "<<desired_angle-current_angle<<endl;
+        cout<<"Desired_angle: "<<desired_angle-current_angle<<endl;  //
 
         v.angular.z=-(desired_angle-current_angle)*50;
 
