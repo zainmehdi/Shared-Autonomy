@@ -16,6 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
         rospy
         std_msgs
         visp_ros
+        tf
 )
 find_package(OpenCV REQUIRED)
 find_package(VISP REQUIRED)
@@ -130,6 +131,9 @@ target_link_libraries(test123 ${catkin_LIBRARIES} )
 add_executable(ROI src/ROI.cpp )
 target_link_libraries(ROI ${OpenCV_LIBRARIES} ${catkin_LIBRARIES} )
 
+add_executable(segmentation src/segmentation.cpp )
+target_link_libraries(segmentation ${OpenCV_LIBRARIES} ${catkin_LIBRARIES} )
+
 add_executable(VC src/Video_capture_from_live_camera.cpp )
 target_link_libraries(VC ${OpenCV_LIBRARIES} ${catkin_LIBRARIES} )
 
@@ -167,6 +171,9 @@ target_link_libraries(Pioneer_IBVS ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
 
 add_executable(Pioneer_Simple src/pioneer_simple_approach.cpp)
 target_link_libraries(Pioneer_Simple ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
+
+add_executable(Obstacle_Avoidance src/Obstacle_avoidance_node.cpp)
+target_link_libraries(Obstacle_Avoidance ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
 
 add_executable(LK_demo src/Lk_demo.cpp)
 target_link_libraries(LK_demo ${OpenCV_LIBRARIES} ${catkin_LIBRARIES})
