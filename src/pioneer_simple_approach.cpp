@@ -12,7 +12,7 @@
 #include "opencv2/imgproc.hpp"
 #include "opencv2/videoio.hpp"
 #include "opencv2/highgui.hpp"
-
+#include <opencv2/tracking.hpp>
 #include <iostream>
 #include <ctype.h>
 #include <ros/ros.h>
@@ -36,6 +36,9 @@ namespace enc = sensor_msgs::image_encodings;
 using namespace cv::xfeatures2d;
 using namespace message_filters;
 
+Ptr<Tracker> tracker;
+Rect2d roii;
+
 
 TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS,20,0.03);
 Size subPixWinSize(10,10), winSize(30,30);
@@ -45,6 +48,7 @@ int MAX_COUNT = 500;
 bool needToInit = false;
 bool nightMode = false;
 bool features_found=false;
+bool tracker_ROI=false;
 double t_y;
 int line_point_size;
 int n=0;
@@ -356,6 +360,20 @@ void visual_servo() {
         frame.copyTo(image);
         cvtColor(image, gray, COLOR_BGR2GRAY);
 
+
+        // Tracker Part
+
+        // update the tracking result
+        tracker->update(image,roii);
+        // draw the tracked object
+        cv::rectangle(image, roii, Scalar( 255, 0, 0 ), 2, 1 );
+        // cv::circle(cv_ptr->image, cv::Point(50, 50), 10, CV_RGB(255,0,0));
+        // show image with the tracked object
+        imshow("tracker",image);
+
+
+
+
         if (nightMode)
             image = Scalar::all(0);
 
@@ -437,15 +455,15 @@ void visual_servo() {
         circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
 
 
-        v.linear.y = (-points[0][n].x + desired_point.x) /100;       // X direction for unity
-        v.linear.x = (-points[0][n].y + desired_point.y) /80;    // Z direction for unity
+        v.linear.y = (-points[0][n].x + desired_point.x) /1500;       // X direction for unity
+        v.linear.x = (-points[0][n].y + desired_point.y) /1800;    // Z direction for unity
 
         current_angle=atan2(points[0][n].y,points[0][n].x);
         desired_angle=atan2(points[0][n].y,desired_point.x);
 
         cout<<"Desired_angle: "<<desired_angle-current_angle<<endl;  //
 
-        v.angular.z=-(desired_angle-current_angle)*50;
+        v.angular.z=(desired_point.x-points[0][n+1].x);
 
         vel_pub.publish(v);
 
@@ -528,8 +546,22 @@ void visual_servo() {
         Mat mask;
         Mat mask_image;
         mask = Mat::zeros(gray.size(), CV_8U);
-        mask_image=Mat(mask,ROI);
+//        mask_image=Mat(mask,ROI);
+        mask_image=Mat(mask,roii);
         mask_image=Scalar(255,255,255);
+
+
+        // Tracker Part
+
+        // update the tracking result
+        tracker->update(image,roii);
+        // draw the tracked object
+        cv::rectangle(image, roii, Scalar( 255, 0, 0 ), 2, 1 );
+        // cv::circle(cv_ptr->image, cv::Point(50, 50), 10, CV_RGB(255,0,0));
+        // show image with the tracked object
+        imshow("tracker",image);
+
+
         if( nightMode )
             image = Scalar::all(0);
 
@@ -635,6 +667,7 @@ void visual_servo() {
         {
             velocity.linear.y=0;
             velocity.angular.z=0;
+         //   velocity.linear.x=1;
             vel_pub.publish(velocity);
         }
 
@@ -747,6 +780,32 @@ void path_drawn_features_nishta()
 }
 
 
+void select_tracker_ROI()
+{
+
+
+
+        if( frame.empty() )
+            return;
+
+        frame.copyTo(image);
+        cvtColor(image, gray, COLOR_BGR2GRAY);
+        if (nightMode)
+            image = Scalar::all(0);
+
+        // Tracker Part
+
+        roii=selectROI("tracker",image);
+        if(roii.width==0 || roii.height==0)
+            return ;
+        tracker->init(image,roii);
+        printf("Start the tracking process, press ESC to quit.\n");
+        tracker_ROI=true;
+
+
+
+}
+
 
 /// Function that takes care of drawing path on the incoming image and then transfers control to the part
 
@@ -759,6 +818,7 @@ void path_not_yet_drawn()
     cvtColor(image, gray, COLOR_BGR2GRAY);
     if (nightMode)
         image = Scalar::all(0);
+
 
  // Drawing circles to show the path user drew
 
@@ -791,6 +851,7 @@ void path_not_yet_drawn()
             path_drawn= false;
             discontinuity=false;
             first_run=true;
+            tracker_ROI=false;
 
 
             break;
@@ -840,7 +901,14 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg1, const geometry_msgs::PoseSt
  //   printf("%.3f \n",pitch);
 
 
-    if (!path_drawn) {
+     if(!tracker_ROI)
+     {
+
+         select_tracker_ROI();
+     }
+
+
+    if (!path_drawn && tracker_ROI) {
 
 //        cout << "\n ****************************************\n"
 //             << "\nDrawing path on the image\n"
@@ -901,6 +969,7 @@ int main(int argc, char **argv) {
     desired_point = Point(320, 475);
     image_transport::ImageTransport it(nh);
 
+    tracker = TrackerKCF::create();
 
     Surf_detector=SURF::create(400);
     image_transport::SubscriberFilter image_sub(it,"image_raw",1);
