@@ -31,7 +31,8 @@
 #include <tf/transform_broadcaster.h>
 #include <tf/LinearMath/Quaternion.h>
 #include <tf/LinearMath/Matrix3x3.h>
-#include<angles/angles.h>
+#include <angles/angles.h>
+#include <std_msgs/String.h>
 
 using namespace cv;
 using namespace std;
@@ -41,6 +42,8 @@ using namespace message_filters;
 
 Ptr<Tracker> tracker;
 Rect2d roii;
+
+enum line_direction{left,right,up};
 
 int w=640;
 int h=480;
@@ -90,6 +93,7 @@ bool feature_on_path_found=false;
 bool path_feature_found=false;
 
 ros::Publisher vel_pub;
+ros::Publisher mask_pub;
 Point Target_point;
 Point Target_point_prev;
 Point p;
@@ -113,19 +117,25 @@ float left_sum,right_sum,up_sum,down_sum;
 vector<uchar> status;
 geometry_msgs::Twist velocity;
 geometry_msgs::PoseStamped pose_from_unity;
+std_msgs::String decision;
 bool obstacle=false;
+double c; // arc variable
+int test=0;
+bool turn_left=false;
+
+int picture_counter=1;
 
 /// Function that selects points to be drawn on image as path. It takes as input
 /// all points that user draws using mouse and then selects certain number of points
 /// using distance as threshold. In the first run distance criteria is overlooked and first
-/// point is directly added. In the upcmoing iterations whenever the distance is greater then 5 the reference point
-/// i.e. the point from where the distance is calculated is updated. This is done beacuse we are drawing rectangles
+/// point is directly added. In the next iterations whenever the distance is greater then 5 the reference point
+/// i.e. the point from where the distance is calculated is updated. This is done because we are drawing rectangles
 /// and we dont want them to overlap. Distance criteria is decided based on the size of rectangle we want to draw.
 /// Though this rectangle drawing is not needed here it was used in previous version (SURF version) to draw regions
 /// and extract features in those regions (Bounding boxes).
-/// Update: I sudden revelation came to me that these rectangles are used to extract a mask which is later used
+/// Update: A sudden revelation came to me that these rectangles are used to extract a mask which is later used
 /// to extract features. (This is what happens when you make dozen versions of your code none of which works and you
-/// look at your code after a gap of few weeks. Me and my procrastination :p
+/// look at your code after a gap of few weeks. Need to cut my sleep ... pheww !!! :p
 
 
 void points_selector(vector<Point> &all_points){
@@ -153,6 +163,40 @@ void points_selector(vector<Point> &all_points){
     line_points_temp.clear();
 
 }
+
+
+
+void arc_direction(vector<Point> line){
+
+    int mid = line.size()/2;
+    Point A = line.front();
+    Point O = line[mid];
+    Point B = line.back();
+
+    c = (A.x-O.x)*(B.y-O.y)-(A.y-O.y)*(B.x-O.x);
+
+    if(c==0)
+        cout<<"Up"<<endl;
+    if(c>0)
+        cout<<"right"<<endl;
+    if(c<0)
+        cout<<"left"<<endl;
+
+
+}
+
+
+void mask_generator(){
+
+    mask = Mat::zeros(gray.size(), CV_8U);
+    for (auto it:selected_points) {
+
+        roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
+        roi = Scalar(255, 255, 255);
+    }
+    imshow("Mask", mask);
+}
+
 
 /// Mouse callback function (Takes care of mouse clicks etc)
 
@@ -260,16 +304,15 @@ void find_features(Mat colr ,Mat gr)
     }
 
 
+
+
     // This is for drawing mask. ( Not needed just shashka)
 
-    mask = Mat::zeros(gray.size(), CV_8U);
-    for (auto it:selected_points) {
+    mask_generator();
 
-        roi = Mat(mask, Rect(it.x - width / 2, it.y - height / 2, width, height));
-        roi = Scalar(255, 255, 255);
-    }
-    imshow("Mask", mask);
-
+    sensor_msgs::ImagePtr mask_image;
+    mask_image= cv_bridge::CvImage(std_msgs::Header(),"mono8",mask).toImageMsg();
+    mask_pub.publish(mask_image);
 
     features_found = true;
     needToInit=false;
@@ -392,6 +435,20 @@ void find_features_2(Mat colr ,Mat gr)
 }
 
 
+
+void Image_Initialization()
+{
+
+    if( frame.empty() )
+        return;
+
+    frame.copyTo(image);
+    cvtColor(image, gray, COLOR_BGR2GRAY);
+    if (nightMode)
+        image = Scalar::all(0);
+}
+
+
 /// This function acquires image from incoming ros topic and uses cv_bridge to convert
 /// it into Mat
 
@@ -445,6 +502,7 @@ void Draw_flowVectors(vector<Point2f> prev_pts, vector<Point2f> next_pts)
         q.y = (int) (p.y - 3 * hypotenuse * sin(angle));
         arrowedLine( image, p, q, Scalar(255,255,255), 1, CV_AA, 0 );
 
+    cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
 
 
@@ -479,14 +537,31 @@ void Draw_flowVectors(vector<Point2f> prev_pts, vector<Point2f> next_pts)
 void visual_servo() {
 
 
-    if (!obstacle) {
+
+    if(turn_left)
+    {
+
+        Image_Initialization();
+
+        v.linear.x=0.0;
+        v.linear.y=0.0;
+        v.angular.z=90;
+        vel_pub.publish(v);
+
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+        imshow("LK Demo", image);
+        cout<<"In turn lef \n";
+        char c= (char)waitKey(20);
+        if(c=='c')
+            turn_left=false;
+    }
 
 
-        if (frame.empty())
-            return;
+    if (!obstacle && !turn_left) {
 
-        frame.copyTo(image);
-        cvtColor(image, gray, COLOR_BGR2GRAY);
+
+       Image_Initialization();
 
 
 
@@ -504,20 +579,10 @@ void visual_servo() {
 
 
 
-        ///////// Updating Desired point //////////
-//
-
-        //////////////////////////////////////////
-
-
-        //cout<<"desired_point "<<desired_point<<endl;
-
-        if (nightMode)
-            image = Scalar::all(0);
 
         if (needToInit) {
 
-            find_features_2(frame, gray);
+            find_features(frame, gray);
 
         } else if (!points[0].empty()) {
 
@@ -546,12 +611,14 @@ void visual_servo() {
 
 
 
+         // The idea was to update the mask as the robot moves by removing the points that have been followed and consider
+         // only future points. Then some interpolation could have been used to account for gaps that are created as the
+         // robot travels
 
+        //// Dynamic Mask Routine /////
 
-//        //// Dynamic Mask Routine /////
-//
 //        mask = Mat::zeros(gray.size(), CV_8U);
-//        for (int it=n+1;it<points[0].size();it++) {
+//        for (int it=n+2;it<points[0].size();it++) {
 //
 //            roi = Mat(mask, Rect(points[0][it].x - 2 / 2, points[0][it].y - 2 / 2, width, height));
 //            roi = Scalar(255, 255, 255);
@@ -559,48 +626,80 @@ void visual_servo() {
 //        imshow("Mask", mask);
 
 
+
+
+//        if (n == points[0].size()/2){
+//            ROI=roii;
+//        }
+
+
         // Now I am activating obstacle routing when only three points are left in points buffer
-        // its better to add a trigger than can be manually controlled ny user to toggle it on oe off
-
-        if (n == points[0].size()/2){
-            ROI=roii;
-        }
-
-        if (n == points[0].size() - 1) {
-
-            obstacle=true;
-            needToInit=true;
-            points[0].clear();
-            points[1].clear();
-
-        } else
-            obstacle=false;
+        // its better to add a trigger than can be manually controlled ny user to toggle it on or off
+//        if (n == points[0].size() - 1) {
+//
+//            obstacle=true;
+//            needToInit=true;
+//            points[0].clear();
+//            points[1].clear();
+//
+//        } else
+//            obstacle=false;
 
 
 
         ////////////////Checking Discontinuity in Points //////////////////
-//
-//   if(distance(points[0][n+1],points[0][n])>50)
-//    {
-//        points[0][n].x-=10;
-//        cout<<"Discontinuity\n";
-//
-//        v.linear.x=0;
-//        v.linear.y=0;
-//        v.angular.y=0;
-//        vel_pub.publish(v);
-//
-//         while(1)
+
+ //if(distance(points[0][n+1],points[0][n])>50)
+
+        if (n == points[0].size() - 2)
+    {
+
+      turn_left=true;
+       // points[0][n].y-=5;             // turning radius ( tukka :p)
+       // cout<<"Discontinuity_left\n";
+
+
+
+//      if(c>0)
+//          v.angular.z=-3;
+//      if(c<0)
+//          v.angular.z=3;
+
+
+
+       //  while(1)
 //         {
 //             char c = (char) waitKey(20);
 //
 //             if (c == 27)
-//                 break;
+//                // break;
 //
 //             vel_pub.publish(v);
 //         }
 //
-//    }
+    }
+
+//        if(distance(points[0][n+1],points[0][n])>10 && distance(points[0][n+1],points[0][n]) < 20)
+//        {
+//            points[0][n].x-=10;
+//            cout<<"Discontinuity_right\n";
+//
+//            v.linear.x=0;
+//            v.linear.y=0;
+//            v.angular.z=0;
+//            vel_pub.publish(v);
+//
+//            while(1)
+//            {
+//                char c = (char) waitKey(20);
+//
+//                if (c == 27)
+//                    break;
+//
+//                vel_pub.publish(v);
+//            }
+//
+//        }
 
 
 
@@ -616,7 +715,7 @@ void visual_servo() {
         else if(current_angle>1.5)
             current_angle=current_angle-3.14;
 
-//
+
         v.linear.y = (-points[0][n].x + desired_point.x) /1500;       // X direction for unity
         v.linear.x = (-points[0][n].y + desired_point.y) /1800;       // Z direction for unity
 
@@ -631,12 +730,12 @@ void visual_servo() {
 
 
 
-        cout<<"Desired_angle: "<<current_angle<<endl;  //
+//        cout<<"Desired_angle: "<<current_angle<<endl;  //
 
 
         if (current_angle!=0)
             // v.angular.z =(2* (current_angle/abs(current_angle)));
-            v.angular.z=(desired_point.x-points[0][n+1].x)*0.5;
+            v.angular.z=(desired_point.x-points[0][n+1].x);
 
 
 
@@ -707,6 +806,7 @@ void visual_servo() {
                 feature_on_path_found = false;
                 discontinuity = false;
                 first_run = true;
+                turn_left=false;
                 break;
             case 'o':
                 obstacle=true;
@@ -714,149 +814,164 @@ void visual_servo() {
                 break;
             case 'n':
                 n++;
+                test+=5;
 
         }
     }
 
-    if(obstacle){
-
-
-        frame.copyTo(image);
-        cvtColor(image, gray, COLOR_BGR2GRAY);
-        ROI=Rect(200,1,250,300);
-        //    ROI=roii;
-        Mat mask;
-        Mat mask_image;
-        mask = Mat::zeros(gray.size(), CV_8U);
-        mask_image=Mat(mask,ROI);
-//        mask_image=Mat(mask,roii);
-        mask_image=Scalar(255,255,255);
-        imshow("tracker",image);
-
-
-        ///////// Updating Desired point //////////
-        //  desired_point.x= -(w/2)*cos(yaw-M_PI/2)+w/2;                                //
-        //  desired_point.y= (-h/2)*sin(yaw-M_PI/2)+h/2;
-
-        //////////////////////////////////////////
-
-
-
-        if( nightMode )
-            image = Scalar::all(0);
-
-        if( needToInit )
-        {
-            // automatic initialization
-            goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
-            cornerSubPix(gray, points[1], subPixWinSize, Size(-1,-1), termcrit);
-            addRemovePt = false;
-        }
-        else if( !points[0].empty() )
-        {
-
-            vector<float> err;
-            if(prevGray.empty())
-                gray.copyTo(prevGray);
-            calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
-                                 3, termcrit, 0, 0.001);
-
-
-            if(!points[0].empty() && !points[1].empty())
-            {
-                Draw_flowVectors(points[0],points[1]);
-                // calculate_FOE(points[0],points[1]);
-            }
-
-            size_t i, k;
-            for( i = k = 0; i < points[1].size(); i++ )
-            {
-                if( addRemovePt )
-                {
-                    if( norm(point - points[1][i]) <= 10 )
-                    {
-                        addRemovePt = false;
-                        continue;
-                    }
-                }
-
-                if( !status[i] )
-                    continue;
-
-                points[1][k++] = points[1][i];
-                circle( image, points[1][i], 3, Scalar(0,255,0), -1, 8);
-            }
-            points[1].resize(k);
-        }
-
-        if( addRemovePt && points[1].size() < (size_t)MAX_COUNT )
-        {
-            vector<Point2f> tmp;
-            tmp.push_back(point);
-            cornerSubPix( gray, tmp, winSize, Size(-1,-1), termcrit);
-            points[1].push_back(tmp[0]);
-            addRemovePt = false;
-        }
-
-        needToInit = false;
-        imshow("LK Demo", image);
-
-        char c = (char)waitKey(10);
-        if( c == 27 )
-            return;
-        switch( c )
-        {
-            case 'r':
-                needToInit = true;
-                break;
-            case 'c':
-                points[0].clear();
-                points[1].clear();
-                obstacle=false;
-                break;
-            case 'n':
-                nightMode = !nightMode;
-                break;
-        }
-
-
-
-        std::swap(points[1], points[0]);
-        cv::swap(prevGray, gray);
-
-        velocity.linear.x=0.01;
-
-        if(right_sum>left_sum && (abs(right_sum-left_sum)>50))
-        {
-
-            //  velocity.linear.x=0.01;
-            velocity.angular.z=25;
-            vel_pub.publish(velocity);
-        }
-
-        else if(left_sum>right_sum && (abs(right_sum-left_sum)>50))
-        {
-
-
-            // velocity.linear.x=0.01;
-            velocity.angular.z=-25;
-            vel_pub.publish(velocity);
-        }
-
-        else
-        {
-            velocity.linear.y=0;
-            velocity.angular.z=0;
-            //   velocity.linear.x=1;
-            vel_pub.publish(velocity);
-        }
-
-    }
+//    if(obstacle){
+//
+//
+//        frame.copyTo(image);
+//        cvtColor(image, gray, COLOR_BGR2GRAY);
+//        ROI=Rect(200,1,250,300);
+//        //    ROI=roii;
+//        Mat mask;
+//        Mat mask_image;
+//        mask = Mat::zeros(gray.size(), CV_8U);
+//        mask_image=Mat(mask,ROI);
+////        mask_image=Mat(mask,roii);
+//        mask_image=Scalar(255,255,255);
+//        imshow("tracker",image);
+//
+//
+//        ///////// Updating Desired point //////////
+//        //  desired_point.x= -(w/2)*cos(yaw-M_PI/2)+w/2;                                //
+//        //  desired_point.y= (-h/2)*sin(yaw-M_PI/2)+h/2;
+//
+//        //////////////////////////////////////////
+//
+//
+//
+//        if( nightMode )
+//            image = Scalar::all(0);
+//
+//        if( needToInit )
+//        {
+//            // automatic initialization
+//            goodFeaturesToTrack(gray, points[1], MAX_COUNT, 0.01, 10, mask, 3, 3, 0, 0.04);
+//            cornerSubPix(gray, points[1], subPixWinSize, Size(-1,-1), termcrit);
+//            addRemovePt = false;
+//        }
+//        else if( !points[0].empty() )
+//        {
+//
+//            vector<float> err;
+//            if(prevGray.empty())
+//                gray.copyTo(prevGray);
+//            calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
+//                                 3, termcrit, 0, 0.001);
+//
+//
+//            if(!points[0].empty() && !points[1].empty())
+//            {
+//                Draw_flowVectors(points[0],points[1]);
+//                // calculate_FOE(points[0],points[1]);
+//            }
+//
+//            size_t i, k;
+//            for( i = k = 0; i < points[1].size(); i++ )
+//            {
+//                if( addRemovePt )
+//                {
+//                    if( norm(point - points[1][i]) <= 10 )
+//                    {
+//                        addRemovePt = false;
+//                        continue;
+//                    }
+//                }
+//
+//                if( !status[i] )
+//                    continue;
+//
+//                points[1][k++] = points[1][i];
+//                circle( image, points[1][i], 3, Scalar(0,255,0), -1, 8);
+//            }
+//            points[1].resize(k);
+//        }
+//
+//        if( addRemovePt && points[1].size() < (size_t)MAX_COUNT )
+//        {
+//            vector<Point2f> tmp;
+//            tmp.push_back(point);
+//            cornerSubPix( gray, tmp, winSize, Size(-1,-1), termcrit);
+//            points[1].push_back(tmp[0]);
+//            addRemovePt = false;
+//        }
+//
+//        needToInit = false;
+//        imshow("LK Demo", image);
+//
+//        char c = (char)waitKey(10);
+//        if( c == 27 )
+//            return;
+//        switch( c )
+//        {
+//            case 'r':
+//                needToInit = true;
+//                break;
+//            case 'c':
+//                points[0].clear();
+//                points[1].clear();
+//                obstacle=false;
+//                break;
+//            case 'n':
+//                nightMode = !nightMode;
+//                break;
+//        }
+//
+//
+//
+//        std::swap(points[1], points[0]);
+//        cv::swap(prevGray, gray);
+//
+//        velocity.linear.x=0.01;
+//
+//        if(right_sum>left_sum && (abs(right_sum-left_sum)>50))
+//        {
+//
+//            //  velocity.linear.x=0.01;
+//            velocity.angular.z=25;
+//            vel_pub.publish(velocity);
+//        }
+//
+//        else if(left_sum>right_sum && (abs(right_sum-left_sum)>50))
+//        {
+//
+//
+//            // velocity.linear.x=0.01;
+//            velocity.angular.z=-25;
+//            vel_pub.publish(velocity);
+//        }
+//
+//        else
+//        {
+//            velocity.linear.y=0;
+//            velocity.angular.z=0;
+//            //   velocity.linear.x=1;
+//            vel_pub.publish(velocity);
+//        }
+//
+//    }
 
 
 
 }
 
+
+
+
+void Draw_Features()
+{
+    if (features_found) {
+        for (auto q:points[1]) {
+            circle(image, q, 3, Scalar(0, 255, 0), -1, 8);
+            imshow("LK Demo", image);
+
+        }
+
+    }
+}
 
 /// This function tries to find features on the drawn path
 
@@ -864,18 +979,10 @@ void path_drawn_features_nishta()
 {
 
 
-    waitKey(10);
-
-    if( frame.empty() )
-        return;
-
-    frame.copyTo(image);
-    cvtColor(image, gray, COLOR_BGR2GRAY);
-    if (nightMode)
-        image = Scalar::all(0);
+    Image_Initialization();
 
 
-    // needtoinit variable decides if user wants to reinitialize the features. In the first run it will always be true
+    // needToInit variable decides if user wants to reinitialize the features. In the first run it will always be true
 
     if (needToInit) {
 
@@ -885,14 +992,8 @@ void path_drawn_features_nishta()
 
     // Drawing features that were found
 
-    if (features_found) {
-        for (auto q:points[1]) {
-            circle(image, q, 3, Scalar(0, 255, 0), -1, 8);
-            imshow("LK Demo", image);
+     Draw_Features();
 
-        }
-
-    }
 
 
     ///////// Updating Desired point //////////
@@ -902,7 +1003,7 @@ void path_drawn_features_nishta()
 
     //////////////////////////////////////////
 
-    cout<<"desired_point "<<desired_point<<"  Yaw: "<<yaw_degrees<<endl;
+  //  cout<<"desired_point "<<desired_point<<"  Yaw: "<<yaw_degrees<<endl;
 
     // Drawing reference point
     circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
@@ -999,13 +1100,7 @@ void select_tracker_ROI()
 
 void path_not_yet_drawn()
 {
-    if( frame.empty() )
-        return;
-
-    frame.copyTo(image);
-    cvtColor(image, gray, COLOR_BGR2GRAY);
-    if (nightMode)
-        image = Scalar::all(0);
+   Image_Initialization();
 
 
     // Drawing circles to show the path user drew
@@ -1023,6 +1118,8 @@ void path_not_yet_drawn()
 
     }
 
+    mask_generator();
+
     char c = (char) waitKey(10);
     if (c == 27)
     {
@@ -1032,6 +1129,11 @@ void path_not_yet_drawn()
 
     switch (c) {
         case 'c':
+
+            ostringstream filename;
+            filename<<"/home/kari/catkin_ws/tensorflow-image-classifier/Training_images/right_right_sequence/right_"<<picture_counter++<<".jpg";
+            cout<<filename.str()<<endl;
+            imwrite( filename.str(), mask );
             line_points.clear();
             points[0].clear();
             points[1].clear();
@@ -1096,5 +1198,18 @@ void path_not_yet_drawn()
 // beta = binary number (0 or 1)         { beta =1   DP.x == max || DP.x == min             //
 //                                         beta =0   min < DP.x < max       }              //
 ////////////////////////////////////////////////////////////////////////////////////////////
+
+
+///////////////////////////////////////////////////////////////////////
+//                                                                  //
+// To check overlapping point i.e the point where we have to make  //
+// a turn I will use built in opencv function that can detect     //
+// if two rectangles are overlapping or not. Rectangles can be   //
+// used because mask and obstacle both have a ROI that we can   //
+// exploit                                                     //
+//                                                            //
+///////////////////////////////////////////////////////////////
+
+
 
 #endif //PROJECT_PIONEER_SIMPLE_APPROACH_H

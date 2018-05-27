@@ -209,3 +209,6 @@ target_link_libraries( gms_match_demo ${OpenCV_LIBRARIES} ${catkin_LIBRARIES} )
 
 add_executable( tvl_opticalflow_demo ./src/tvl_opticalflow.cpp )
 target_link_libraries( tvl_opticalflow_demo ${OpenCV_LIBRARIES} ${catkin_LIBRARIES} )
+
+add_executable( kcf_try ./src/kcf.cpp )
+target_link_libraries( kcf_try ${OpenCV_LIBRARIES} ${catkin_LIBRARIES} )

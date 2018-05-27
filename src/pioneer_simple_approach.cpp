@@ -33,22 +33,23 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg1, const geometry_msgs::PoseSt
  //   printf("%.3f \n",pitch);
 
 
-    // Allows drawing a ROI for KCF Tracker
+//     Allows drawing a ROI for KCF Tracker
 
-     if(!tracker_ROI)
-     {
+//     if(!tracker_ROI)
+//     {
+//
+//         select_tracker_ROI();
+//     }
 
-         select_tracker_ROI();
-     }
-
-
-    if (!path_drawn && tracker_ROI) {
+    if (!path_drawn ){
+    //if (!path_drawn && tracker_ROI) {
 
 //        cout << "\n ****************************************\n"
 //             << "\nDrawing path on the image\n"
 //             << "\n*****************************************\n";
 
         path_not_yet_drawn();
+
 
     }
 
@@ -62,6 +63,7 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg1, const geometry_msgs::PoseSt
 //             << "\n*****************************************\n";
 
         path_drawn_features_nishta();
+        arc_direction (selected_points);
     }
 
 
@@ -80,12 +82,23 @@ void imageCb(const sensor_msgs::ImageConstPtr& msg1, const geometry_msgs::PoseSt
 
     }
 
-    if(discontinuity)
-       cout<<"Path is discontinuous. You have an obstacle in between \n";
+    ROS_INFO("I heard: [%s]", decision.data.c_str());
+
 }
 
 
+void python_callback(std_msgs::StringConstPtr msg)
+{
+    decision.data=msg->data;
 
+//    if(decision->data == "left_left_sequence")
+//        cout<<" ////////////////////////////////////////"
+//                "///////// Message read ///////////////"
+//                "//////////////////////////////////////";
+
+//    ROS_INFO("I heard: [%s]", msg->data.c_str());
+
+}
 
 
 int main(int argc, char **argv) {
@@ -98,13 +111,15 @@ int main(int argc, char **argv) {
 
     tracker = TrackerKCF::create();
 
-    Surf_detector=SURF::create(400);
+//    Surf_detector=SURF::create(400);
     image_transport::SubscriberFilter image_sub(it,"image_raw",1);
     message_filters::Subscriber<geometry_msgs::PoseStamped> pose_sub(nh,"pose",1);
     TimeSynchronizer<sensor_msgs::Image,geometry_msgs::PoseStamped> sync(image_sub,pose_sub,10);
     sync.registerCallback(boost::bind(&imageCb,_1,_2));
     vel_pub=nh.advertise<geometry_msgs::Twist>("cmd_vel",1000);
- //   image_sub = it.subscribe("image_raw", 1,imageCb);
+    mask_pub=nh.advertise<sensor_msgs::Image>("mask",1000);
+    ros::Subscriber python_msg = nh.subscribe("result", 1000, python_callback);
+    // image_sub = it.subscribe("image_raw", 1,imageCb);
     namedWindow( "LK Demo", 1 );
     setMouseCallback( "LK Demo", onMouse, 0 );
     ros::spin();
