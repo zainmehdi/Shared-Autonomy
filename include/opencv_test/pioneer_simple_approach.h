@@ -7,7 +7,7 @@
 
 
 #include <iostream>
-#include<math.h>
+#include <math.h>
 #include "ctime"
 #include "chrono"
 #include "ros/ros.h"
@@ -111,17 +111,38 @@ Ptr<FeatureDetector> Surf;
 Ptr<SURF> Surf_detector;
 std::vector<KeyPoint> keypoints[2];
 std::vector<Mat> surf_descriptor[2];
-double roll,pitch,yaw_degrees,yaw;
-
+double roll,pitch,yaw;
+int yaw_degrees;
 float left_sum,right_sum,up_sum,down_sum;
 vector<uchar> status;
 geometry_msgs::Twist velocity;
 geometry_msgs::PoseStamped pose_from_unity;
-std_msgs::String decision;
+int decision;
 bool obstacle=false;
 double c; // arc variable
 int test=0;
-bool turn_left=false;
+bool case_1_2_3_4=false;
+bool case_5_up_1=false;
+bool case_5_up_2=false;
+
+double errror,changeError,totalError,error_prev;
+
+
+void clear_all()
+{
+    points[0].clear();
+    points[1].clear();
+    line_points.clear();
+    line_points_circle.clear();
+    selected_points.clear();
+    features_found = false;
+    cout << "Points Cleared \n";
+    path_drawn= false;
+    n=0;
+    feature_on_path_found=false;
+    discontinuity=false;
+    first_run=true;
+}
 
 int picture_counter=1;
 
@@ -165,6 +186,53 @@ void points_selector(vector<Point> &all_points){
 }
 
 
+float angle_bw_lines(Point2f a, Point2f b, Point2f c)
+{
+
+    float dist1 = sqrt(  pow((a.x-c.x),2) + pow((a.y-c.y),2) );
+    float dist2 = sqrt(  pow((b.x-c.x),2) + pow((b.y-c.y),2) );
+
+
+    float Ax, Ay;
+    float Bx, By;
+    float Cx, Cy;
+
+    //find closest point to C
+    //printf("dist = %lf %lf\n", dist1, dist2);
+
+    Cx = c.x;
+    Cy = c.y;
+    if(dist1 < dist2)
+    {
+        Bx = a.x;
+        By = a.y;
+        Ax = b.x;
+        Ay = b.y;
+
+
+    }else{
+        Bx = b.x;
+        By = b.y;
+        Ax = a.x;
+        Ay = a.y;
+    }
+
+
+    float Q1 = Cx - Ax;
+    float Q2 = Cy - Ay;
+    float P1 = Bx - Ax;
+    float P2 = By - Ay;
+
+
+    float A = acos( (P1*Q1 + P2*Q2) / ( sqrt(P1*P1+P2*P2) * sqrt(Q1*Q1+Q2*Q2) ) );
+
+    A = A*180/M_PI;
+
+    if(c.x>a.x)
+        return -1*A;
+
+    return A;
+}
 
 void arc_direction(vector<Point> line){
 
@@ -472,7 +540,7 @@ void acquire_pose(const geometry_msgs::PoseStampedConstPtr& pose)
     tf::Quaternion quater;
     tf::quaternionMsgToTF(pose->pose.orientation,quater);
     tf::Matrix3x3(quater).getRPY(roll,pitch,yaw);
-    yaw_degrees=angles::to_degrees(yaw);
+    yaw_degrees=-1*angles::to_degrees(pitch);
 }
 
 
@@ -537,33 +605,154 @@ void Draw_flowVectors(vector<Point2f> prev_pts, vector<Point2f> next_pts)
 void visual_servo() {
 
 
+    if(decision==5 && n==2) {
+        case_5_up_1=true;
+        case_1_2_3_4=true;
 
-    if(turn_left)
+    }
+
+    if(decision==5 && n>2) {
+        case_5_up_1 = false;
+        case_1_2_3_4=false;
+
+    }
+    if(decision==5 && n == points[0].size()-1){
+        case_5_up_2=true;
+        case_1_2_3_4=true;
+    }
+
+    if (n == points[0].size() - 1) {
+
+        case_1_2_3_4 = true;
+    }
+
+    if((decision ==1 || decision==3) && case_1_2_3_4)
     {
 
         Image_Initialization();
 
         v.linear.x=0.0;
         v.linear.y=0.0;
-        v.angular.z=90;
+        v.angular.z=50;
         vel_pub.publish(v);
 
         circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
 
         imshow("LK Demo", image);
-        cout<<"In turn lef \n";
+        cout<<"In turn left \n";
         char c= (char)waitKey(20);
-        if(c=='c')
-            turn_left=false;
+        switch(c){
+
+            case 'c':
+                case_1_2_3_4=false;
+
+            case 'n':
+                n++;
+        }
+
+
+
+
+    }
+
+    if((decision ==2 || decision==4) && case_1_2_3_4)
+    {
+
+        Image_Initialization();
+
+        v.linear.x=0.0;
+        v.linear.y=0.0;
+        v.angular.z=-25;
+        vel_pub.publish(v);
+
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+        imshow("LK Demo", image);
+        cout<<"In turn right \n";
+        char c= (char)waitKey(20);
+        switch(c){
+
+            case 'c':
+                case_1_2_3_4=false;
+
+            case 'n':
+                n++;
+        }
+    }
+
+    if(decision ==5 && case_5_up_1)
+    {
+
+        Image_Initialization();
+
+        v.linear.x=0.0;
+        v.linear.y=0.0;
+        v.angular.y=-60;
+        v.angular.z=0;
+        v.angular.x=0;
+        vel_pub.publish(v);
+
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+        imshow("LK Demo", image);
+        cout<<"In turn up_1 \n";
+        char c= (char)waitKey(20);
+        switch(c){
+
+            case 'c':
+                case_1_2_3_4=false;
+                case_5_up_1=false;
+                clear_all();
+
+
+            case 'n':
+                n++;
+        }
+
+
+    }
+
+    if(decision ==5 && case_5_up_2)
+    {
+
+        Image_Initialization();
+
+        v.linear.x=0.05;
+        v.linear.y=0.0;
+        v.angular.y=0;
+        v.angular.z=0;
+        v.angular.x=0;
+        vel_pub.publish(v);
+
+        circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
+
+        imshow("LK Demo", image);
+        cout<<"In turn up_2 \n";
+        char c= (char)waitKey(20);
+        switch(c){
+
+            case 'c':
+                case_1_2_3_4=false;
+                case_5_up_2=false;
+                clear_all();
+
+
+
+            case 'n':
+                n++;
+        }
+
     }
 
 
-    if (!obstacle && !turn_left) {
+
+
+    if (!obstacle && !case_1_2_3_4) {
 
 
        Image_Initialization();
 
-
+     //  cout<<"In visual servo \n";
 
         ////////// Tracker Part/////////////
 
@@ -590,8 +779,18 @@ void visual_servo() {
             vector<float> err;
             if (prevGray.empty())
                 gray.copyTo(prevGray);
-            calcOpticalFlowPyrLK(prevGray, gray, points[0], points[1], status, err, winSize,
-                                 3, termcrit, 0, 0.001);
+
+            calcOpticalFlowPyrLK(prevGray,
+                                 gray,
+                                 points[0],
+                                 points[1],
+                                 status,
+                                 err,
+                                 winSize,
+                                 3,
+                                 termcrit,
+                                 0,
+                                 0.001);
 
 
             size_t i, k;
@@ -651,10 +850,13 @@ void visual_servo() {
 
  //if(distance(points[0][n+1],points[0][n])>50)
 
-        if (n == points[0].size() - 2)
-    {
 
-      turn_left=true;
+
+
+//        if (n == points[0].size() - 2)
+//    {
+//
+//        case_1_2_3_4=true;
        // points[0][n].y-=5;             // turning radius ( tukka :p)
        // cout<<"Discontinuity_left\n";
 
@@ -677,7 +879,7 @@ void visual_servo() {
 //             vel_pub.publish(v);
 //         }
 //
-    }
+//    }
 
 //        if(distance(points[0][n+1],points[0][n])>10 && distance(points[0][n+1],points[0][n]) < 20)
 //        {
@@ -702,47 +904,73 @@ void visual_servo() {
 //        }
 
 
+        if(!points[0].empty()) {
 
 
-        float desired_angle;
-        float current_angle;
+            float desired_angle;
+            float current_angle;
 
-        circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
+            circle(image, points[0][n], 10, CV_RGB(255, 255, 0), 1, 8, 0);
 
-        current_angle =  atan2(points[0][n].y-desired_point.y ,-points[0][n].x+desired_point.x);
-        if(current_angle<-1.5)
-            current_angle= current_angle+3.14;
-        else if(current_angle>1.5)
-            current_angle=current_angle-3.14;
-
-
-        v.linear.y = (-points[0][n].x + desired_point.x) /1500;       // X direction for unity
-        v.linear.x = (-points[0][n].y + desired_point.y) /1800;       // Z direction for unity
+//            current_angle = atan2(points[0][n].y - desired_point.y, -points[0][n].x + desired_point.x);
+//            current_angle=(current_angle*180)/M_PI + 90;
+//            if (current_angle < -1.5)
+//                current_angle = current_angle + 3.14;
+//            else if (current_angle > 1.5)
+//                current_angle = current_angle - 3.14;
 
 
-        //  v.linear.y =( (-points[0][n].x + desired_point.x)*cos(pitch ) + (-points[0][n].y + desired_point.y)*sin(pitch)) /1500;       // X direction for unity
-        //  v.linear.x = (-(-points[0][n].x + desired_point.x)*sin(pitch)+ (-points[0][n].y + desired_point.y)*cos(pitch)) /1800;       // Z direction for unity
+//            Point2f P2;
+//
+//            P2.x =  (int)round(desired_point.x + 150* cos(current_angle * CV_PI / 180.0));
+//            P2.y =  (int)round(desired_point.y + 150 * sin(current_angle * CV_PI / 180.0));
 
+            arrowedLine( image, desired_point,Point_<double>(desired_point.x,desired_point.y-50) , Scalar(255,255,255), 1, CV_AA, 0 );
+            arrowedLine( image, desired_point,points[0][n+1] , Scalar(255,255,255), 1, CV_AA, 0 );
 
+            double angle = angle_bw_lines(desired_point,Point_<double>(desired_point.x,desired_point.y+50),points[0][n+1]);
 
-
-        desired_angle= current_angle+pitch;
-
-
-
-//        cout<<"Desired_angle: "<<current_angle<<endl;  //
-
-
-        if (current_angle!=0)
-            // v.angular.z =(2* (current_angle/abs(current_angle)));
-            v.angular.z=(desired_point.x-points[0][n+1].x);
+          //  cout<<angle<<endl;
+            cout<<yaw_degrees<<endl;
 
 
 
-        vel_pub.publish(v);
+            //  v.linear.y =( (-points[0][n].x + desired_point.x)*cos(pitch ) + (-points[0][n].y + desired_point.y)*sin(pitch)) /1500;       // X direction for unity
+            //  v.linear.x = (-(-points[0][n].x + desired_point.x)*sin(pitch)+ (-points[0][n].y + desired_point.y)*cos(pitch)) /1800;       // Z direction for unity
 
 
 
+
+//            if (current_angle != 0)
+//                v.angular.z =(2* (current_angle/abs(current_angle)));
+
+
+//            errror= desired_point.x - points[0][n].x;
+
+
+//            cout<<"Error: "<<errror<<endl;
+//            v.angular.z = (0.5*errror);
+
+
+
+                v.angular.z=angle + yaw_degrees;
+                v.linear.y = (-points[0][n].x + desired_point.x) / 1500;       // X direction for unity
+                v.linear.x = (-points[0][n].y + desired_point.y) / 1800;       // Z direction for unity
+
+                vel_pub.publish(v);
+
+
+
+
+
+
+
+
+
+
+
+
+        }
 
         // Drawing desired point on image
         circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
@@ -755,8 +983,9 @@ void visual_servo() {
         first_run = false;
 
 
-        if (distance(desired_point, points[0][n]) < 1) {
+        if (distance(desired_point, points[0][n]) < 0.5) {
 
+            cout<<points[0][n]<<endl;
             n++;
             if (n == points[0].size())
                 waitKey();
@@ -795,18 +1024,17 @@ void visual_servo() {
                 break;
 
             case 'c':
-                points[0].clear();
-                points[1].clear();
-                line_points.clear();
-                line_points_circle.clear();
-                n = 0;
-                features_found = false;
-                cout << "Points Cleared \n";
-                path_drawn = false;
-                feature_on_path_found = false;
-                discontinuity = false;
-                first_run = true;
-                turn_left=false;
+               clear_all();
+
+                // Making sure that the velocity sent to robot is zero. It may look useless here but when we are in
+                // later cycles of execution and clear points and come back to this thread then v variable will have
+                // velocity value of that thread (non zero) and will be continuously sent to the robot which is not
+                // what we want as during this stage of execution robot should be stationary so we are enforcing our
+                // static robot state here.
+
+                v.linear.y = 0;
+                v.linear.x = 0;
+                v.angular.z= 0;
                 break;
             case 'o':
                 obstacle=true;
@@ -1043,18 +1271,19 @@ void path_drawn_features_nishta()
             break;
 
         case 'c':
-            points[0].clear();
-            points[1].clear();
-            line_points.clear();
-            line_points_circle.clear();
-            selected_points.clear();
-            features_found = false;
-            cout << "Points Cleared \n";
-            path_drawn= false;
-            n=0;
-            feature_on_path_found=false;
-            discontinuity=false;
-            first_run=true;
+//            points[0].clear();
+//            points[1].clear();
+//            line_points.clear();
+//            line_points_circle.clear();
+//            selected_points.clear();
+//            features_found = false;
+//            cout << "Points Cleared \n";
+//            path_drawn= false;
+//            n=0;
+//            feature_on_path_found=false;
+//            discontinuity=false;
+//            first_run=true;
+            clear_all();
 
 
             break;
@@ -1102,7 +1331,6 @@ void path_not_yet_drawn()
 {
    Image_Initialization();
 
-
     // Drawing circles to show the path user drew
 
     for (auto index:line_points) {
@@ -1131,8 +1359,11 @@ void path_not_yet_drawn()
         case 'c':
 
             ostringstream filename;
-            filename<<"/home/kari/catkin_ws/tensorflow-image-classifier/Training_images/right_right_sequence/right_"<<picture_counter++<<".jpg";
-            cout<<filename.str()<<endl;
+            filename<<"/home/kari/catkin_ws/tensorflow-image-classifier/Training_images/lup_"<<picture_counter++<<".jpg";
+            // Only use for creating training set
+
+          //  cout<<filename.str()<<endl;c
+
             imwrite( filename.str(), mask );
             line_points.clear();
             points[0].clear();
@@ -1142,6 +1373,7 @@ void path_not_yet_drawn()
             discontinuity=false;
             first_run=true;
             tracker_ROI=false;
+            v.linear.x=0;
 
 
             break;
@@ -1153,16 +1385,6 @@ void path_not_yet_drawn()
 
     circle(image, desired_point, 15, Scalar(0, 150, 0), -1, 8);
     imshow("LK Demo", image);
-
-    // Making sure that the velocity sent to robot is zero. It may look useless here but when we are in
-    // later cycles of execution and clear points and come back to this thread then v variable will have
-    // velocity value of that thread (non zero) and will be continuously sent to the robot which is not
-    // what we want as during this stage of execution robot should be stationary so we are enforcing our
-    // static robot state here.
-
-    v.linear.y = 0;
-    v.linear.x = 0;
-    v.angular.z= 0;
 
     vel_pub.publish(v);
 }
@@ -1202,12 +1424,11 @@ void path_not_yet_drawn()
 
 ///////////////////////////////////////////////////////////////////////
 //                                                                  //
-// To check overlapping point i.e the point where we have to make  //
-// a turn I will use built in opencv function that can detect     //
-// if two rectangles are overlapping or not. Rectangles can be   //
-// used because mask and obstacle both have a ROI that we can   //
-// exploit                                                     //
-//                                                            //
+// Decision == 1  => approach from left and turn left              //
+// Decision == 2  => approach from left and turn right            //
+// Decision == 3  => approach from left and turn left            //
+// Decision == 4  => approach from left and turn right          //
+//                                                             //
 ///////////////////////////////////////////////////////////////
 
 
